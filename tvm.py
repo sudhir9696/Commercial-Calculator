@@ -1,75 +1,119 @@
 import streamlit as st
 import numpy_financial as npf
+import pandas as pd
 
-st.set_page_config(page_title="Universal TVM Solver", layout="centered")
+# Set the page to be wide for better data table and chart viewing
+st.set_page_config(page_title="CRE Financial Dashboard", layout="wide")
 
-st.title("CCIM Universal TVM Calculator")
+# Mimicking the professional header from the CCIM Institute
+st.title("📈 Commercial Real Estate Financial Dashboard")
 st.markdown("---")
 
-# 1. UI: Define what we are solving for and the periodicity
-solve_for = st.radio("Solve For:", ["PV", "FV", "PMT", "n (Periods)", "Rate (I/YR)"], horizontal=True)
-compounding = st.radio("Compounding Frequency:", ["Annual", "Monthly"], horizontal=True)
+# 1. Create the Tabs
+tab_tvm, tab_dcf, tab_concepts, tab_screener = st.tabs([
+    "🔍 Overview (Universal TVM)", 
+    "⚙️ Operating (DCF & IRR)", 
+    "💡 Key Concepts (Six Functions)", 
+    "📊 Using the Calculator (Deal Screener)"
+])
 
-st.markdown("### Inputs")
-col1, col2 = st.columns(2)
-
-# 2. UI: Dynamically hide the input field for the variable we are solving for
-with col1:
-    pv = st.number_input("PV (Present Value)", value=-100000.0, step=1000.0) if solve_for != "PV" else None
-    pmt = st.number_input("PMT (Payment)", value=0.0, step=100.0) if solve_for != "PMT" else None
-    fv = st.number_input("FV (Future Value)", value=0.0, step=1000.0) if solve_for != "FV" else None
-
-with col2:
-    # Dynamically change the label and default value based on compounding
-    if solve_for != "n (Periods)":
-        n_label = "n (Total Months)" if compounding == "Monthly" else "n (Total Years)"
-        n_default = 60.0 if compounding == "Monthly" else 5.0
-        n = st.number_input(n_label, value=n_default, step=1.0)
-    else:
-        n = None
-    i_yr = st.number_input("I/YR (Annual Interest Rate %)", value=10.0, step=0.1) if solve_for != "Rate (I/YR)" else None
-
-st.markdown("---")
-
-# 3. Logic: Adjust for Annual vs Monthly Compounding
-if st.button("Calculate", type="primary"):
+# ==========================================
+# TAB 1: UNIVERSAL TVM SOLVER
+# ==========================================
+with tab_tvm:
+    st.header("Universal TVM Solver")
     
-    # Set up the operational variables
-    if solve_for != "n (Periods)" and solve_for != "Rate (I/YR)":
-        periods = n  # No longer multiplying by 12, as 'n' is already in months!
-        rate = (i_yr / 100) / 12 if compounding == "Monthly" else (i_yr / 100)
-    
-    st.markdown("### Result:")
-    
-    try:
-        # 4. Math: Execute the appropriate financial function
-        if solve_for == "PV":
-            result = npf.pv(rate, periods, pmt, fv)
-            st.success(f"**Present Value (PV):** ${result:,.2f}")
+    solve_for = st.radio("Solve For:", ["PV", "FV", "PMT", "n (Periods)", "Rate (I/YR)"], horizontal=True, key="tvm_solve")
+    compounding = st.radio("Compounding Frequency:", ["Annual", "Monthly"], horizontal=True, key="tvm_comp")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        pv = st.number_input("PV (Present Value)", value=-100000.0, step=1000.0) if solve_for != "PV" else None
+        pmt = st.number_input("PMT (Payment)", value=0.0, step=100.0) if solve_for != "PMT" else None
+        fv = st.number_input("FV (Future Value)", value=0.0, step=1000.0) if solve_for != "FV" else None
+
+    with col2:
+        if solve_for != "n (Periods)":
+            n_label = "n (Total Months)" if compounding == "Monthly" else "n (Total Years)"
+            n_default = 60.0 if compounding == "Monthly" else 5.0
+            n = st.number_input(n_label, value=n_default, step=1.0)
+        else:
+            n = None
             
-        elif solve_for == "FV":
-            result = npf.fv(rate, periods, pmt, pv)
-            st.success(f"**Future Value (FV):** ${result:,.2f}")
-            
-        elif solve_for == "PMT":
-            result = npf.pmt(rate, periods, pv, fv)
-            freq_label = "Monthly" if compounding == "Monthly" else "Annual"
-            st.success(f"**{freq_label} Payment (PMT):** ${result:,.2f}")
-            
-        elif solve_for == "n (Periods)":
+        i_yr = st.number_input("I/YR (Annual Interest Rate %)", value=10.0, step=0.1) if solve_for != "Rate (I/YR)" else None
+
+    if st.button("Calculate TVM", type="primary"):
+        if solve_for != "n (Periods)" and solve_for != "Rate (I/YR)":
+            periods = n 
             rate = (i_yr / 100) / 12 if compounding == "Monthly" else (i_yr / 100)
-            result = npf.nper(rate, pmt, pv, fv)
-            if compounding == "Monthly":
-                st.success(f"**Total Periods (n):** {result:,.2f} months ({result/12:,.2f} years)")
-            else:
-                st.success(f"**Total Periods (n):** {result:,.2f} years")
-                
-        elif solve_for == "Rate (I/YR)":
-            periods = n # No longer multiplying by 12 here either!
-            # npf.rate returns the periodic rate. We must annualize it for the final output.
-            periodic_rate = npf.rate(periods, pmt, pv, fv)
-            annual_rate = (periodic_rate * 12 * 100) if compounding == "Monthly" else (periodic_rate * 100)
-            st.success(f"**Annual Interest Rate (I/YR):** {annual_rate:,.2f}%")
+        
+        st.markdown("### Result:")
+        try:
+            if solve_for == "PV":
+                result = npf.pv(rate, periods, pmt, fv)
+                st.success(f"**Present Value (PV):** ${result:,.2f}")
+            elif solve_for == "FV":
+                result = npf.fv(rate, periods, pmt, pv)
+                st.success(f"**Future Value (FV):** ${result:,.2f}")
+            elif solve_for == "PMT":
+                result = npf.pmt(rate, periods, pv, fv)
+                st.success(f"**Payment (PMT):** ${result:,.2f}")
+            elif solve_for == "n (Periods)":
+                rate = (i_yr / 100) / 12 if compounding == "Monthly" else (i_yr / 100)
+                result = npf.nper(rate, pmt, pv, fv)
+                st.success(f"**Total Periods (n):** {result:,.2f}")
+            elif solve_for == "Rate (I/YR)":
+                periods = n
+                periodic_rate = npf.rate(periods, pmt, pv, fv)
+                annual_rate = (periodic_rate * 12 * 100) if compounding == "Monthly" else (periodic_rate * 100)
+                st.success(f"**Annual Interest Rate (I/YR):** {annual_rate:,.2f}%")
+        except Exception as e:
+            st.error("Error in calculation. Check your cash flow sign conventions.")
+
+# ==========================================
+# TAB 2: DCF & IRR MODEL
+# ==========================================
+with tab_dcf:
+    st.header("Discounted Cash Flow (DCF) & IRR")
+    
+    col_dcf1, col_dcf2 = st.columns(2)
+    with col_dcf1:
+        holding_period = st.number_input("Holding Period (Years)", min_value=1, max_value=10, value=5, step=1)
+    with col_dcf2:
+        discount_rate = st.number_input("Target Yield / Discount Rate (%)", min_value=0.0, max_value=30.0, value=10.0, step=0.5)
+
+    cash_flows = []
+    for year in range(holding_period + 1):
+        if year == 0:
+            val = st.number_input("Year 0 (Initial Equity - Outflow)", value=-1000000.0, step=10000.0)
+        elif year == holding_period:
+            val = st.number_input(f"Year {year} (Operations + Sale Proceeds - Inflow)", value=1300000.0, step=10000.0)
+        else:
+            val = st.number_input(f"Year {year} Cash Flow", value=80000.0 + (year * 5000), step=1000.0)
+        cash_flows.append(val)
+
+    if st.button("Calculate IRR & NPV", type="primary"):
+        try:
+            irr_pct = npf.irr(cash_flows) * 100 
+        except:
+            irr_pct = None
             
-    except Exception as e:
-        st.error("Error in calculation. Please check your cash flow sign conventions (outflows must be negative).")
+        rate_decimal = discount_rate / 100
+        npv = npf.npv(rate_decimal, cash_flows)
+        
+        m1, m2 = st.columns(2)
+        if irr_pct is not None:
+            m1.metric("Internal Rate of Return (IRR)", f"{irr_pct:,.2f}%")
+        m2.metric(f"Net Present Value (NPV) @ {discount_rate}%", f"${npv:,.2f}")
+        
+        df_cf = pd.DataFrame({"Year": [f"Yr {i}" for i in range(len(cash_flows))], "Cash Flow": cash_flows})
+        st.bar_chart(df_cf.set_index("Year"))
+
+# ==========================================
+# TAB 3 & 4: FUTURE EXPANSION
+# ==========================================
+with tab_concepts:
+    st.info("Module 3: The Six Functions of the Dollar will be built here.")
+
+with tab_screener:
+    st.info("Module 4: The full APOD Deal Screener will be built here.")
