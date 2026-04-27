@@ -20,7 +20,13 @@ with col1:
     fv = st.number_input("FV (Future Value)", value=0.0, step=1000.0) if solve_for != "FV" else None
 
 with col2:
-    n = st.number_input("n (Total Years)", value=5.0, step=1.0) if solve_for != "n (Periods)" else None
+    # Dynamically change the label and default value based on compounding
+    if solve_for != "n (Periods)":
+        n_label = "n (Total Months)" if compounding == "Monthly" else "n (Total Years)"
+        n_default = 60.0 if compounding == "Monthly" else 5.0
+        n = st.number_input(n_label, value=n_default, step=1.0)
+    else:
+        n = None
     i_yr = st.number_input("I/YR (Annual Interest Rate %)", value=10.0, step=0.1) if solve_for != "Rate (I/YR)" else None
 
 st.markdown("---")
@@ -30,7 +36,7 @@ if st.button("Calculate", type="primary"):
     
     # Set up the operational variables
     if solve_for != "n (Periods)" and solve_for != "Rate (I/YR)":
-        periods = n * 12 if compounding == "Monthly" else n
+        periods = n  # No longer multiplying by 12, as 'n' is already in months!
         rate = (i_yr / 100) / 12 if compounding == "Monthly" else (i_yr / 100)
     
     st.markdown("### Result:")
@@ -59,7 +65,7 @@ if st.button("Calculate", type="primary"):
                 st.success(f"**Total Periods (n):** {result:,.2f} years")
                 
         elif solve_for == "Rate (I/YR)":
-            periods = n * 12 if compounding == "Monthly" else n
+            periods = n # No longer multiplying by 12 here either!
             # npf.rate returns the periodic rate. We must annualize it for the final output.
             periodic_rate = npf.rate(periods, pmt, pv, fv)
             annual_rate = (periodic_rate * 12 * 100) if compounding == "Monthly" else (periodic_rate * 100)
