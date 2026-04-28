@@ -276,24 +276,19 @@ with tab_screener:
     st.markdown("### 1. Acquisition & Financing")
     col_f1, col_f2, col_f3 = st.columns(3)
     with col_f1:
-        purchase_price = st.number_input("Purchase Price", value=3750000.0, step=50000.0)
-        acq_costs = st.number_input("Acquisition Costs", value=80000.0, step=5000.0)
+        purchase_price = st.number_input("Purchase Price", value=0.0, step=50000.0)
+        acq_costs = st.number_input("Acquisition Costs", value=0.0, step=5000.0)
     with col_f2:
-        loan_amount = st.number_input("Loan Amount (1st Mortgage)", value=0.0, step=50000.0, help="Leave 0 for All-Cash/Part I analysis")
+        loan_amount = st.number_input("Loan Amount (1st Mortgage)", value=0.0, step=50000.0)
         interest_rate = st.number_input("Interest Rate (%)", value=0.0, step=0.1)
     with col_f3:
         amortization = st.number_input("Amortization (Years)", value=0, step=1)
         loan_fees = st.number_input("Loan Fees/Costs", value=0.0, step=1000.0)
 
-    # Initial Investment Math
+    # Initial Investment & ADS Math
     initial_investment = purchase_price + acq_costs + loan_fees - loan_amount
-
-    # Annual Debt Service (ADS) Math
     if loan_amount > 0 and interest_rate > 0 and amortization > 0:
-        monthly_rate = (interest_rate / 100) / 12
-        months = amortization * 12
-        monthly_pmt = npf.pmt(monthly_rate, months, -loan_amount)
-        ads = monthly_pmt * 12
+        ads = npf.pmt((interest_rate / 100) / 12, amortization * 12, -loan_amount) * 12
     else:
         ads = 0.0
 
@@ -301,73 +296,107 @@ with tab_screener:
     st.markdown("### 2. Income")
     col_i1, col_i2 = st.columns(2)
     with col_i1:
-        pri = st.number_input("1. Potential Rental Income (PRI)", value=480000.0, step=10000.0)
-        vacancy_pct = st.number_input("2. Vacancy & Credit Loss (%)", value=10.0, step=0.5)
+        pri = st.number_input("1. Potential Rental Income (PRI)", value=435000.0, step=5000.0)
+        vacancy_pct = st.number_input("2. Vacancy & Credit Loss (%)", value=3.5, step=0.5)
     with col_i2:
-        other_income = st.number_input("4. Plus: Other Income", value=0.0, step=1000.0)
+        other_income = st.number_input("4. Plus: Other Income", value=16200.0, step=500.0)
 
     # Revenue Math
     vac_loss = pri * (vacancy_pct / 100)
-    eri = pri - vac_loss  # Effective Rental Income
-    goi = eri + other_income # Gross Operating Income
+    eri = pri - vac_loss
+    goi = eri + other_income
 
-    # --- SECTION 3: OPERATING EXPENSES ---
+    # --- SECTION 3: OPERATING EXPENSES (DYNAMIC) ---
     st.markdown("### 3. Operating Expenses")
-    st.caption("Use the quick override for case studies, or expand to itemize.")
+    st.caption("All fields default to 0. The APOD ledger below will dynamically update as you enter values.")
     
-    opex_override = st.number_input("Total Operating Expenses (Quick Override)", value=165000.0, step=5000.0)
+    # 3-Column Layout for Itemized Expenses
+    c_ex1, c_ex2, c_ex3 = st.columns(3)
     
-    with st.expander("Itemize Operating Expenses (Overrides quick total if > 0)"):
-        c_ex1, c_ex2 = st.columns(2)
-        with c_ex1:
-            tax = st.number_input("Real Estate Taxes", value=0.0, step=1000.0)
-            ins = st.number_input("Property Insurance", value=0.0, step=1000.0)
-            mgt = st.number_input("Off Site Management", value=0.0, step=1000.0)
-            maint = st.number_input("Repairs and Maintenance", value=0.0, step=1000.0)
-        with c_ex2:
-            util = st.number_input("Utilities (Total)", value=0.0, step=1000.0)
-            payroll = st.number_input("Payroll", value=0.0, step=1000.0)
-            misc = st.number_input("Accounting, Legal, Misc", value=0.0, step=1000.0)
-        
-        itemized_total = tax + ins + mgt + maint + util + payroll + misc
-    
-    # Determine which OpEx to use
-    final_opex = itemized_total if itemized_total > 0 else opex_override
+    with c_ex1:
+        re_taxes = st.number_input("Real Estate Taxes", value=0.0, step=1000.0)
+        pp_taxes = st.number_input("Personal Property Taxes", value=0.0, step=100.0)
+        insurance = st.number_input("Property Insurance", value=0.0, step=1000.0)
+        management = st.number_input("Off Site Management", value=0.0, step=1000.0)
+        payroll = st.number_input("Payroll", value=0.0, step=1000.0)
+        benefits = st.number_input("Expenses/Benefits", value=0.0, step=1000.0)
+
+    with c_ex2:
+        workers_comp = st.number_input("Taxes/Worker's Comp", value=0.0, step=100.0)
+        repairs = st.number_input("Repairs and Maintenance", value=0.0, step=1000.0)
+        electric = st.number_input("Electric - Common Area", value=0.0, step=100.0)
+        water = st.number_input("Water & Sewer", value=0.0, step=100.0)
+        gas = st.number_input("Natural Gas", value=0.0, step=100.0)
+        accounting = st.number_input("Accounting and Legal", value=0.0, step=100.0)
+
+    with c_ex3:
+        licenses = st.number_input("Licenses/Permits", value=0.0, step=100.0)
+        advertising = st.number_input("Advertising", value=0.0, step=1000.0)
+        supplies = st.number_input("Supplies", value=0.0, step=100.0)
+        hvac = st.number_input("HVAC Repair/Filters", value=0.0, step=100.0)
+        landscaping = st.number_input("Landscaping", value=0.0, step=100.0)
+        other_misc = st.number_input("Other Miscellaneous", value=0.0, step=100.0)
+
+    # Dynamic Sum of all entered expenses
+    final_opex = sum([
+        re_taxes, pp_taxes, insurance, management, payroll, benefits,
+        workers_comp, repairs, electric, water, gas, accounting,
+        licenses, advertising, supplies, hvac, landscaping, other_misc
+    ])
 
     # --- SECTION 4: THE APOD STATEMENT ---
     noi = goi - final_opex
     cfbt = noi - ads
     
-    # KPIs
     cap_rate = (noi / purchase_price) * 100 if purchase_price > 0 else 0.0
     grm = purchase_price / pri if pri > 0 else 0.0
 
     st.markdown("---")
     st.markdown("## 📄 Annual Property Operating Data (APOD)")
     
-    # 1. Top KPIs
     c_kpi1, c_kpi2, c_kpi3 = st.columns(3)
     c_kpi1.metric("Initial Investment", f"${initial_investment:,.0f}")
     c_kpi2.metric("Acq. Cap Rate", f"{cap_rate:.2f}%")
     c_kpi3.metric("GRM", f"{grm:.2f}")
     
-    st.divider() # Native Streamlit visual separator
+    st.divider() 
     
-    # 2. The Native Pandas Ledger
-    # This keeps your Python code clean and highly readable
+    # Base Income Ledger
     apod_data = [
-        {"Line Item": "1 POTENTIAL RENTAL INCOME", "Subtotal": "", "Total": f"${pri:,.0f}"},
-        {"Line Item": f"2 Less: Vacancy & Cr. Losses ({vacancy_pct}%)", "Subtotal": f"(${vac_loss:,.0f})", "Total": ""},
-        {"Line Item": "3 EFFECTIVE RENTAL INCOME", "Subtotal": "", "Total": f"${eri:,.0f}"},
-        {"Line Item": "4 Plus: Other Income", "Subtotal": f"${other_income:,.0f}", "Total": ""},
-        {"Line Item": "5 GROSS OPERATING INCOME", "Subtotal": "", "Total": f"${goi:,.0f}"},
-        {"Line Item": "29 TOTAL OPERATING EXPENSES", "Subtotal": f"(${final_opex:,.0f})", "Total": ""},
-        {"Line Item": "30 NET OPERATING INCOME", "Subtotal": "", "Total": f"${noi:,.0f}"},
-        {"Line Item": "31 Less: Annual Debt Service", "Subtotal": f"(${ads:,.0f})", "Total": ""},
-        {"Line Item": "35 CASH FLOW BEFORE TAXES", "Subtotal": "", "Total": f"${cfbt:,.0f}"}
+        {"Line Item": "POTENTIAL RENTAL INCOME", "Subtotal": "", "Total": f"${pri:,.0f}"},
+        {"Line Item": f"Less: Vacancy & Cr. Losses ({vacancy_pct}%)", "Subtotal": f"(${vac_loss:,.0f})", "Total": ""},
+        {"Line Item": "EFFECTIVE RENTAL INCOME", "Subtotal": "", "Total": f"${eri:,.0f}"},
+        {"Line Item": "Plus: Other Income", "Subtotal": f"${other_income:,.0f}", "Total": ""},
+        {"Line Item": "GROSS OPERATING INCOME", "Subtotal": "", "Total": f"${goi:,.0f}"},
+        {"Line Item": "OPERATING EXPENSES:", "Subtotal": "", "Total": ""}
     ]
     
-    df_apod = pd.DataFrame(apod_data)
+    # Master list of expense tuples
+    all_expenses = [
+        ("Real Estate Taxes", re_taxes), ("Personal Property Taxes", pp_taxes),
+        ("Property Insurance", insurance), ("Off Site Management", management),
+        ("Payroll", payroll), ("Expenses/Benefits", benefits),
+        ("Taxes/Worker's Compensation", workers_comp), ("Repairs and Maintenance", repairs),
+        ("Electric - Common Area", electric), ("Water & Sewer", water),
+        ("Natural Gas", gas), ("Accounting and Legal", accounting),
+        ("Licenses/Permits", licenses), ("Advertising", advertising),
+        ("Supplies", supplies), ("HVAC Repair/Filters", hvac),
+        ("Landscaping", landscaping), ("Other Miscellaneous", other_misc)
+    ]
     
-    # Render using Streamlit's native static table for rigid alignment
+    # DYNAMIC INJECTION: Only add the expense to the ledger if it is > 0
+    for name, amount in all_expenses:
+        if amount > 0:
+            apod_data.append({"Line Item": f"   • {name}", "Subtotal": f"(${amount:,.0f})", "Total": ""})
+            
+    # Add Bottom-Line Totals
+    apod_data.extend([
+        {"Line Item": "TOTAL OPERATING EXPENSES", "Subtotal": f"(${final_opex:,.0f})", "Total": ""},
+        {"Line Item": "NET OPERATING INCOME", "Subtotal": "", "Total": f"${noi:,.0f}"},
+        {"Line Item": "Less: Annual Debt Service", "Subtotal": f"(${ads:,.0f})", "Total": ""},
+        {"Line Item": "CASH FLOW BEFORE TAXES", "Subtotal": "", "Total": f"${cfbt:,.0f}"}
+    ])
+    
+    # Render pure Pandas static table
+    df_apod = pd.DataFrame(apod_data)
     st.table(df_apod.set_index("Line Item"))
