@@ -179,6 +179,85 @@ with tab_dcf:
             "Net Cash Flow": cash_flows
         })
         st.bar_chart(df_plot.set_index("Year"))
+        
+        # ==========================================
+        # VISUAL PROOFS (Add this to the bottom of Tab 2)
+        # ==========================================
+        st.markdown("---")
+        st.markdown("### 🧮 Mathematical Proofs")
+        
+        # 1. Proof of MIRR Table
+        with st.expander("Show Proof of MIRR"):
+            st.caption(f"Negative cash flows discounted to Year 0 at Safe Rate ({safe_rate}%). Positive cash flows compounded to Year {holding_period} at Reinvestment Rate ({reinvest_rate}%).")
+            mirr_data = []
+            pv_outflows_total = 0
+            fv_inflows_total = 0
+            
+            for t, cf in enumerate(cash_flows):
+                if cf < 0:
+                    pv = cf / ((1 + safe_rate/100) ** t)
+                    fv = 0
+                elif cf > 0:
+                    pv = 0
+                    fv = cf * ((1 + reinvest_rate/100) ** (holding_period - t))
+                else:
+                    pv, fv = 0, 0
+                
+                pv_outflows_total += pv
+                fv_inflows_total += fv
+                
+                mirr_data.append({
+                    "Year": f"Yr {t}",
+                    "Cash Flow": f"${cf:,.2f}",
+                    "PV of Outflows (Safe Rate)": f"${pv:,.2f}" if pv != 0 else "-",
+                    "FV of Inflows (Reinvest Rate)": f"${fv:,.2f}" if fv != 0 else "-"
+                })
+            
+            # Add Total Row
+            mirr_data.append({
+                "Year": "TOTALS",
+                "Cash Flow": "-",
+                "PV of Outflows (Safe Rate)": f"${pv_outflows_total:,.2f}",
+                "FV of Inflows (Reinvest Rate)": f"${fv_inflows_total:,.2f}"
+            })
+            
+            st.dataframe(pd.DataFrame(mirr_data), use_container_width=True)
+
+        # 2. Proof of Capital Accumulation Table (Sinking Fund)
+        with st.expander("Show Proof of Capital Accumulation (CGR)"):
+            st.caption(f"Future negative cash flows are funded by discounting them back 1 year against previous positive cash flows at the Safe Rate ({safe_rate}%). Remaining positive cash flows are compounded forward at the Reinvestment Rate ({reinvest_rate}%).")
+            
+            cap_data = []
+            total_fv_adj = 0
+            
+            for t in range(len(cash_flows)):
+                orig_cf = cash_flows[t]
+                adj_amount = adjusted_cfs[t] - orig_cf if t < len(adjusted_cfs) else 0
+                adj_cf = adjusted_cfs[t]
+                
+                fv_adj = 0
+                if t > 0 and adj_cf > 0:
+                    fv_adj = adj_cf * ((1 + reinvest_rate/100) ** (holding_period - t))
+                    total_fv_adj += fv_adj
+                    
+                cap_data.append({
+                    "Year": f"Yr {t}",
+                    "Original CF": f"${orig_cf:,.2f}",
+                    "Sinking Fund Adj": f"${adj_amount:,.2f}" if adj_amount != 0 else "-",
+                    "Adjusted CF": f"${adj_cf:,.2f}",
+                    "FV of Adjusted CF": f"${fv_adj:,.2f}" if fv_adj != 0 else "-"
+                })
+                
+            # Add Total Row
+            cap_data.append({
+                "Year": "TOTAL",
+                "Original CF": "-",
+                "Sinking Fund Adj": "-",
+                "Adjusted CF": "-",
+                "FV of Adjusted CF": f"${total_fv_adj:,.2f}"
+            })
+            
+            st.dataframe(pd.DataFrame(cap_data), use_container_width=True)
 
 # ==========================================
 # TAB 3 & 4: FUTURE EXPANSION
