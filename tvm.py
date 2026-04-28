@@ -264,6 +264,120 @@ with tab_dcf:
 # ==========================================
 with tab_concepts:
     st.info("Module 3: The Six Functions of the Dollar detailed calculators will go here.")
-
+    
+# ==========================================
+# TAB 4: THE CCIM APOD (Deal Screener)
+# ==========================================
 with tab_screener:
-    st.info("Module 4: The full APOD Deal Screener will go here.")
+    st.header("Annual Property Operating Data (APOD)")
+    st.markdown("Comprehensive Before-Tax Cash Flow Analysis")
+
+    # --- SECTION 1: CAPITAL & FINANCING ---
+    st.markdown("### 1. Acquisition & Financing")
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        purchase_price = st.number_input("Purchase Price", value=3750000.0, step=50000.0)
+        acq_costs = st.number_input("Acquisition Costs", value=80000.0, step=5000.0)
+    with col_f2:
+        loan_amount = st.number_input("Loan Amount (1st Mortgage)", value=0.0, step=50000.0, help="Leave 0 for All-Cash/Part I analysis")
+        interest_rate = st.number_input("Interest Rate (%)", value=0.0, step=0.1)
+    with col_f3:
+        amortization = st.number_input("Amortization (Years)", value=0, step=1)
+        loan_fees = st.number_input("Loan Fees/Costs", value=0.0, step=1000.0)
+
+    # Initial Investment Math
+    initial_investment = purchase_price + acq_costs + loan_fees - loan_amount
+
+    # Annual Debt Service (ADS) Math
+    if loan_amount > 0 and interest_rate > 0 and amortization > 0:
+        monthly_rate = (interest_rate / 100) / 12
+        months = amortization * 12
+        monthly_pmt = npf.pmt(monthly_rate, months, -loan_amount)
+        ads = monthly_pmt * 12
+    else:
+        ads = 0.0
+
+    # --- SECTION 2: SPACE MARKET (REVENUE) ---
+    st.markdown("### 2. Income")
+    col_i1, col_i2 = st.columns(2)
+    with col_i1:
+        pri = st.number_input("1. Potential Rental Income (PRI)", value=480000.0, step=10000.0)
+        vacancy_pct = st.number_input("2. Vacancy & Credit Loss (%)", value=10.0, step=0.5)
+    with col_i2:
+        other_income = st.number_input("4. Plus: Other Income", value=0.0, step=1000.0)
+
+    # Revenue Math
+    vac_loss = pri * (vacancy_pct / 100)
+    eri = pri - vac_loss  # Effective Rental Income
+    goi = eri + other_income # Gross Operating Income
+
+    # --- SECTION 3: OPERATING EXPENSES ---
+    st.markdown("### 3. Operating Expenses")
+    st.caption("Use the quick override for case studies, or expand to itemize.")
+    
+    opex_override = st.number_input("Total Operating Expenses (Quick Override)", value=165000.0, step=5000.0)
+    
+    with st.expander("Itemize Operating Expenses (Overrides quick total if > 0)"):
+        c_ex1, c_ex2 = st.columns(2)
+        with c_ex1:
+            tax = st.number_input("Real Estate Taxes", value=0.0, step=1000.0)
+            ins = st.number_input("Property Insurance", value=0.0, step=1000.0)
+            mgt = st.number_input("Off Site Management", value=0.0, step=1000.0)
+            maint = st.number_input("Repairs and Maintenance", value=0.0, step=1000.0)
+        with c_ex2:
+            util = st.number_input("Utilities (Total)", value=0.0, step=1000.0)
+            payroll = st.number_input("Payroll", value=0.0, step=1000.0)
+            misc = st.number_input("Accounting, Legal, Misc", value=0.0, step=1000.0)
+        
+        itemized_total = tax + ins + mgt + maint + util + payroll + misc
+    
+    # Determine which OpEx to use
+    final_opex = itemized_total if itemized_total > 0 else opex_override
+
+    # --- SECTION 4: THE APOD STATEMENT ---
+    noi = goi - final_opex
+    cfbt = noi - ads
+    
+    # KPIs
+    cap_rate = (noi / purchase_price) * 100 if purchase_price > 0 else 0.0
+    grm = purchase_price / pri if pri > 0 else 0.0
+
+    st.markdown("---")
+    st.markdown("## 📄 Annual Property Operating Data (APOD)")
+    
+    # Using columns to create the classic CCIM ledger look
+    c1, c2, c3 = st.columns([2, 1, 1])
+    
+    # Top KPI Header
+    c1.markdown(f"**Initial Investment:** ${initial_investment:,.0f}")
+    c2.markdown(f"**Acq. Cap Rate:** {cap_rate:.2f}%")
+    c3.markdown(f"**GRM:** {grm:.2f}")
+    st.markdown("---")
+    
+    c1.markdown("**1 POTENTIAL RENTAL INCOME**")
+    c3.markdown(f"**${pri:,.0f}**")
+    
+    c1.markdown(f"2 Less: Vacancy & Cr. Losses ({vacancy_pct}%)")
+    c2.markdown(f"(${vac_loss:,.0f})")
+    
+    c1.markdown("**3 EFFECTIVE RENTAL INCOME**")
+    c3.markdown(f"**${eri:,.0f}**")
+    
+    c1.markdown("4 Plus: Other Income")
+    c2.markdown(f"${other_income:,.0f}")
+    
+    c1.markdown("#### 5 GROSS OPERATING INCOME")
+    c3.markdown(f"#### ${goi:,.0f}")
+    
+    c1.markdown("29 TOTAL OPERATING EXPENSES")
+    c2.markdown(f"(${final_opex:,.0f})")
+    
+    c1.markdown("#### 30 NET OPERATING INCOME")
+    c3.markdown(f"#### ${noi:,.0f}")
+    
+    c1.markdown("31 Less: Annual Debt Service")
+    c2.markdown(f"(${ads:,.0f})")
+    
+    st.markdown("---")
+    c1.markdown("### 35 CASH FLOW BEFORE TAXES")
+    c3.markdown(f"### ${cfbt:,.0f}")
