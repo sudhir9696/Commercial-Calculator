@@ -345,39 +345,37 @@ with tab_screener:
     st.markdown("---")
     st.markdown("## 📄 Annual Property Operating Data (APOD)")
     
-    # Using columns to create the classic CCIM ledger look
-    c1, c2, c3 = st.columns([2, 1, 1])
-    
-    # Top KPI Header
-    c1.markdown(f"**Initial Investment:** ${initial_investment:,.0f}")
-    c2.markdown(f"**Acq. Cap Rate:** {cap_rate:.2f}%")
-    c3.markdown(f"**GRM:** {grm:.2f}")
+    # 1. Upgraded KPI Header
+    c_kpi1, c_kpi2, c_kpi3 = st.columns(3)
+    c_kpi1.metric("Initial Investment", f"${initial_investment:,.0f}")
+    c_kpi2.metric("Acq. Cap Rate", f"{cap_rate:.2f}%")
+    c_kpi3.metric("GRM", f"{grm:.2f}")
     st.markdown("---")
     
-    c1.markdown("**1 POTENTIAL RENTAL INCOME**")
-    c3.markdown(f"**${pri:,.0f}**")
+    # 2. Helper function to lock row alignment and standardize font size
+    def apod_row(col1_text, col2_text, col3_text, is_bold=False, is_header=False):
+        c1, c2, c3 = st.columns([2, 1, 1])
+        # Apply standard bolding or H3 tags depending on importance
+        fmt_start = "### " if is_header else ("**" if is_bold else "")
+        fmt_end = "**" if is_bold and not is_header else ""
+        
+        c1.markdown(f"{fmt_start}{col1_text}{fmt_end}")
+        c2.markdown(f"{fmt_start}{col2_text}{fmt_end}")
+        c3.markdown(f"{fmt_start}{col3_text}{fmt_end}")
+
+    # 3. Render the Ledger Row by Row
+    apod_row("1 POTENTIAL RENTAL INCOME", "", f"${pri:,.0f}", is_bold=True)
+    apod_row(f"2 Less: Vacancy & Cr. Losses ({vacancy_pct}%)", f"(${vac_loss:,.0f})", "")
+    apod_row("3 EFFECTIVE RENTAL INCOME", "", f"${eri:,.0f}", is_bold=True)
+    apod_row("4 Plus: Other Income", f"${other_income:,.0f}", "")
     
-    c1.markdown(f"2 Less: Vacancy & Cr. Losses ({vacancy_pct}%)")
-    c2.markdown(f"(${vac_loss:,.0f})")
-    
-    c1.markdown("**3 EFFECTIVE RENTAL INCOME**")
-    c3.markdown(f"**${eri:,.0f}**")
-    
-    c1.markdown("4 Plus: Other Income")
-    c2.markdown(f"${other_income:,.0f}")
-    
-    c1.markdown("#### 5 GROSS OPERATING INCOME")
-    c3.markdown(f"#### ${goi:,.0f}")
-    
-    c1.markdown("29 TOTAL OPERATING EXPENSES")
-    c2.markdown(f"(${final_opex:,.0f})")
-    
-    c1.markdown("#### 30 NET OPERATING INCOME")
-    c3.markdown(f"#### ${noi:,.0f}")
-    
-    c1.markdown("31 Less: Annual Debt Service")
-    c2.markdown(f"(${ads:,.0f})")
+    st.markdown("<br>", unsafe_allow_html=True) # Adds a little breathing room
+    apod_row("5 GROSS OPERATING INCOME", "", f"${goi:,.0f}", is_bold=True)
+    apod_row("29 TOTAL OPERATING EXPENSES", f"(${final_opex:,.0f})", "")
     
     st.markdown("---")
-    c1.markdown("### 35 CASH FLOW BEFORE TAXES")
-    c3.markdown(f"### ${cfbt:,.0f}")
+    apod_row("30 NET OPERATING INCOME", "", f"${noi:,.0f}", is_header=True)
+    apod_row("31 Less: Annual Debt Service", f"(${ads:,.0f})", "")
+    
+    st.markdown("---")
+    apod_row("35 CASH FLOW BEFORE TAXES", "", f"${cfbt:,.0f}", is_header=True)
