@@ -119,23 +119,39 @@ with tab_dcf:
             
         npv = npf.npv(discount_rate / 100, cash_flows)
         
-        # 2. Capital Accumulation Logic
-        total_accumulated = 0
+        # 2. CCIM Capital Accumulation Logic (The Sinking Fund Method)
+        safe_dec = safe_rate / 100
         reinvest_dec = reinvest_rate / 100
-        for t, cf in enumerate(cash_flows):
-            if cf > 0:
-                # Compound positive cash flows forward to Year N
-                total_accumulated += cf * ((1 + reinvest_dec) ** (holding_period - t))
+        
+        # Create a copy of cash flows to adjust backwards
+        adjusted_cfs = cash_flows.copy()
+
+        # Iterate backwards from end of hold to Year 1
+        for t in range(len(adjusted_cfs) - 1, 0, -1):
+            if adjusted_cfs[t] < 0:
+                # Discount the deficit back 1 year at the safe rate
+                cost_in_prev_year = adjusted_cfs[t] / (1 + safe_dec)
+                # Apply it to the previous year's cash flow
+                adjusted_cfs[t-1] += cost_in_prev_year
+                # Zero out the current year since the deficit is now funded
+                adjusted_cfs[t] = 0
+
+        # Now compound the adjusted positive cash flows forward at Reinvest Rate
+        total_accumulated = 0
+        for t in range(1, len(adjusted_cfs)):
+            if adjusted_cfs[t] > 0:
+                total_accumulated += adjusted_cfs[t] * ((1 + reinvest_dec) ** (holding_period - t))
         
         # 3. Compound Growth Rate (CGR)
-        # ((Accumulated / Absolute Initial Investment) ^ (1/n)) - 1
+        # Use the adjusted Year 0 equity in case deficits were pushed all the way back to Day 1
+        adjusted_initial_equity = abs(adjusted_cfs[0])
         try:
-            cgr = ((total_accumulated / abs(initial_investment)) ** (1 / holding_period) - 1) * 100
+            cgr = ((total_accumulated / adjusted_initial_equity) ** (1 / holding_period) - 1) * 100
         except:
             cgr = 0.0
         
         # 4. Modified Internal Rate of Return (MIRR)
-        # Uses Safe Rate as the finance rate for negative CFs, and Reinvest Rate for positive CFs
+        # npf.mirr natively handles the exact textbook math for MIRR
         try:
             mirr = npf.mirr(cash_flows, safe_rate/100, reinvest_rate/100) * 100
         except:
@@ -147,14 +163,14 @@ with tab_dcf:
         
         with res_col1:
             st.subheader("Standard Metrics")
-            st.metric("Internal Rate of Return (IRR)", f"{irr:,.2f}%", help="Assumes all cash flows are reinvested at the IRR.")
-            st.metric("Net Present Value (NPV)", f"${npv:,.2f}", help=f"Discounted at {discount_rate}%")
+            st.metric("Internal Rate of Return (IRR)", f"{irr:,.2f}%")
+            st.metric("Net Present Value (NPV)", f"${npv:,.2f}")
             
         with res_col2:
             st.subheader("Wealth Accumulation")
-            st.metric("Total Capital Accumulated", f"${total_accumulated:,.2f}", help=f"Assumes interim cash flows grow at {reinvest_rate}%")
-            st.metric("Modified IRR (MIRR)", f"{mirr:,.2f}%", help=f"Finance Rate: {safe_rate}% | Reinvest Rate: {reinvest_rate}%")
-            st.metric("Compound Growth Rate (CGR)", f"{cgr:,.2f}%", help="Effective annual growth of your total wealth pool.")
+            st.metric("Total Capital Accumulated", f"${total_accumulated:,.2f}")
+            st.metric("Modified IRR (MIRR)", f"{mirr:,.2f}%")
+            st.metric("Compound Growth Rate (CGR)", f"{cgr:,.2f}%")
 
         # Visualization
         st.markdown("### Net Cash Flow Timeline")
