@@ -338,12 +338,23 @@ with tab_screener:
         landscaping = st.number_input("Landscaping", value=0.0, step=100.0)
         other_misc = st.number_input("Other Miscellaneous", value=0.0, step=100.0)
 
-    # Dynamic Sum of all entered expenses
-    final_opex = sum([
-        re_taxes, pp_taxes, insurance, management, payroll, benefits,
-        workers_comp, repairs, electric, water, gas, accounting,
-        licenses, advertising, supplies, hvac, landscaping, other_misc
-    ])
+    # --- EXPENSE CALCULATION LOGIC ---
+    st.markdown("#### Expense Calculation Method")
+    use_ratio = st.checkbox("Use Market Expense Ratio instead of Itemized Expenses?", value=False)
+    
+    if use_ratio:
+        # If checked, ignore the itemized list and use the ratio against GOI
+        exp_ratio = st.number_input("Operating Expense Ratio (% of GOI)", value=40.0, step=1.0)
+        final_opex = goi * (exp_ratio / 100)
+    else:
+        # If unchecked, sum up all the individual variables from the fields above
+        final_opex = sum([
+            re_taxes, pp_taxes, insurance, management, payroll, benefits,
+            workers_comp, repairs, electric, water, gas, accounting,
+            licenses, advertising, supplies, hvac, landscaping, other_misc
+        ])
+    
+    
 
     # --- SECTION 4: THE APOD STATEMENT ---
     noi = goi - final_opex
