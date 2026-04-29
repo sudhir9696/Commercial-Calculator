@@ -554,3 +554,63 @@ with tab_proforma:
     c_res1.metric("Projected Sale Price", f"${rounded_sale_price:,.0f}")
     c_res2.metric("Cost of Sale", f"(${cost_of_sale_dollars:,.0f})")
     c_res3.metric("Sale Proceeds (Before Tax)", f"${proceeds_before_tax:,.0f}")
+    
+    # --- SECTION 6: RETURN METRICS (IRR & NPV) ---
+    st.markdown("---")
+    st.markdown("### 📈 Investment Return Metrics (Before Tax / Unleveraged)")
+    
+    # 1. Inputs for the Return Calculations
+    c_ret1, c_ret2 = st.columns(2)
+    with c_ret1:
+        initial_investment = st.number_input("Initial Purchase Price (Year 0)", value=4600000.0, step=50000.0)
+    with c_ret2:
+        target_yield_pct = st.number_input("Target Yield / Discount Rate (%)", value=8.0, step=0.5)
+
+    # 2. Construct the T-Bar (Cash Flow Stream)
+    cash_flows = [-initial_investment] # EOY 0
+    
+    # Loop through the holding period to get operating cash flows
+    for year in range(1, int(hold_period) + 1):
+        if year == int(hold_period):
+            # Final Year = Operating Cash Flow + Sale Proceeds
+            final_cf = row_cfbt[f"Year {year}"] + proceeds_before_tax
+            cash_flows.append(final_cf)
+        else:
+            # Operating Years = Just Operating Cash Flow
+            cash_flows.append(row_cfbt[f"Year {year}"])
+
+    # 3. Pure Python Financial Calculators
+    target_rate = target_yield_pct / 100.0
+    
+    # NPV / Target Purchase Price Math
+    max_purchase_price = sum(cf / ((1 + target_rate) ** i) for i, cf in enumerate(cash_flows[1:], start=1))
+
+    # IRR Math (Newton-Raphson approximation)
+    def calculate_irr(cfs, max_iterations=1000, tolerance=1e-6):
+        rate = 0.10 # initial guess
+        for _ in range(max_iterations):
+            npv = sum(cf / ((1 + rate) ** i) for i, cf in enumerate(cfs))
+            derivative = sum(-i * cf / ((1 + rate) ** (i + 1)) for i, cf in enumerate(cfs))
+            if abs(derivative) < 1e-10: return 0.0 
+            new_rate = rate - npv / derivative
+            if abs(new_rate - rate) < tolerance: return new_rate
+            rate = new_rate
+        return rate
+        
+    calculated_irr = calculate_irr(cash_flows) * 100
+
+    # 4. Display the T-Bar Table
+    st.markdown("#### The 'T-Bar' (Cash Flow Stream)")
+    tbar_dict = {"EOY": [], "Cash Flow ($)": []}
+    for i, cf in enumerate(cash_flows):
+        tbar_dict["EOY"].append(f"Year {i}")
+        tbar_dict["Cash Flow ($)"].append(cf)
+    
+    df_tbar = pd.DataFrame(tbar_dict).set_index("EOY")
+    st.table(df_tbar.style.format("${:,.0f}"))
+
+    # 5. Display the Final Output Metrics
+    st.markdown("#### Return Outputs")
+    c_out1, c_out2 = st.columns(2)
+    c_out1.metric("Before-Tax IRR", f"{calculated_irr:.2f}%")
+    c_out2.metric(f"Max Purchase Price at {target_yield_pct}% Yield", f"${max_purchase_price:,.0f}")
