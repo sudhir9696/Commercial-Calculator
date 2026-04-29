@@ -340,19 +340,29 @@ with tab_screener:
 
     # --- EXPENSE CALCULATION LOGIC ---
     st.markdown("#### Expense Calculation Method")
-    use_ratio = st.checkbox("Use Market Expense Ratio instead of Itemized Expenses?", value=False)
+    use_ratio = st.checkbox("Use Market Override Ratio instead of Itemized Expenses?", value=False)
     
     if use_ratio:
-        # If checked, ignore the itemized list and use the ratio against GOI
-        exp_ratio = st.number_input("Operating Expense Ratio (% of GOI)", value=40.0, step=1.0)
-        final_opex = goi * (exp_ratio / 100)
+        # If checked, you force a flat market ratio (like the 40% from Page 9.3)
+        exp_ratio_override = st.number_input("Market Expense Ratio Override (% of GOI)", value=40.0, step=1.0)
+        final_opex = goi * (exp_ratio_override / 100)
     else:
-        # If unchecked, sum up all the individual variables from the fields above
+        # If unchecked, the app sums up all the raw itemized variables you typed in
         final_opex = sum([
             re_taxes, pp_taxes, insurance, management, payroll, benefits,
             workers_comp, repairs, electric, water, gas, accounting,
             licenses, advertising, supplies, hvac, landscaping, other_misc
         ])
+
+    # --- AUTOMATIC % GOI CALCULATOR ---
+    # The app calculates exactly what your ratio is based on the data above
+    if goi > 0:
+        actual_ratio = (final_opex / goi) * 100
+    else:
+        actual_ratio = 0.0
+        
+    # Display the calculated ratio dynamically on the screen
+    st.metric("Actual Operating Expense Ratio", f"{actual_ratio:.2f}% of GOI", border=True)
     
     
 
@@ -418,38 +428,41 @@ with tab_screener:
 # ==========================================
 with tab_proforma:
     st.header("Cash Flow Analysis Worksheet")
-    st.markdown("Multi-Year Forecast of Cash Flows Before Taxes (CFBT)")
+    st.markdown("Multi-Year Forecast (Data linked directly from Tab 4: APOD)")
+
+    # --- THE AUTOMATION ENGINE ---
+    # Calculate the dynamic Expense Ratio using the live data from Tab 4
+    if goi > 0:
+        calculated_expense_ratio = final_opex / goi
+    else:
+        calculated_expense_ratio = 0.0
 
     # 1. Growth Assumptions Input
-    st.markdown("### 1. Base Assumptions & Growth Rates")
+    st.markdown("### 1. Future Growth Assumptions")
     c_asm1, c_asm2, c_asm3 = st.columns(3)
     
     with c_asm1:
-        y1_pri = st.number_input("Year 1 PRI", value=480000.0, step=10000.0)
-        pri_growth = st.number_input("Annual PRI Growth Rate (%)", value=2.5, step=0.1)
+        # st.metric displays data read-only so it stays perfectly synced with Tab 4
+        st.metric("Year 1 PRI (Linked)", f"${pri:,.0f}")
+        pri_growth = st.number_input("Annual PRI Growth Rate (%)", value=3.0, step=0.1)
     
     with c_asm2:
-        vac_pct = st.number_input("Vacancy & Credit Loss (%)", value=10.0, step=0.5)
-        y1_other_inc = st.number_input("Year 1 Other Income", value=0.0, step=1000.0)
-        other_inc_growth = st.number_input("Other Income Growth (%)", value=0.0, step=0.1)
+        st.metric("Year 1 Other Income (Linked)", f"${other_income:,.0f}")
+        other_inc_growth = st.number_input("Other Income Growth (%)", value=2.0, step=0.1)
         
     with c_asm3:
-        y1_opex = st.number_input("Year 1 Operating Expenses", value=165000.0, step=5000.0)
-        opex_growth = st.number_input("Annual OpEx Growth Rate (%)", value=3.0, step=0.1)
-        hold_period = st.number_input("Holding Period (Forecast + 1)", value=5, min_value=1, max_value=15)
+        st.metric("Linked OpEx Ratio (% of GOI)", f"{calculated_expense_ratio * 100:.2f}%")
+        hold_period = st.number_input("Holding Period (Forecast + 1)", value=6, min_value=1, max_value=15)
 
     # 2. Build the Multi-Year Engine
-    # We forecast to hold_period + 1 (e.g., 6 years for a 5-year hold) to get terminal NOI
-    forecast_years = hold_period + 1 
+    forecast_years = hold_period 
     
-    # Initialize dictionaries to hold our row data
     row_pri, row_vac, row_eri, row_other, row_goi = {}, {}, {}, {}, {}
     row_opex, row_noi, row_ads, row_cfbt = {}, {}, {}, {}
     
-    # Starting values
-    current_pri = y1_pri
-    current_other = y1_other_inc
-    current_opex = y1_opex
+    # Starting values pull strictly from Tab 4's variables
+    current_pri = pri
+    current_other = other_income
     annual_ads = 0.0 # Keeping at 0 to match the "Without Financing" textbook example
     
     for year in range(1, forecast_years + 1):
@@ -457,13 +470,15 @@ with tab_proforma:
         
         # Calculate Space Market
         row_pri[col_name] = current_pri
-        row_vac[col_name] = current_pri * (vac_pct / 100)
+        
+        # Vacancy pulls the percentage established in Tab 4!
+        row_vac[col_name] = current_pri * (vacancy_pct / 100)
         row_eri[col_name] = current_pri - row_vac[col_name]
         row_other[col_name] = current_other
         row_goi[col_name] = row_eri[col_name] + row_other[col_name]
         
-        # Calculate Expenses & NOI
-        row_opex[col_name] = current_opex
+        # Calculate Expenses & NOI (Using the dynamically calculated ratio)
+        row_opex[col_name] = row_goi[col_name] * calculated_expense_ratio
         row_noi[col_name] = row_goi[col_name] - row_opex[col_name]
         
         # Calculate CFBT
@@ -473,12 +488,11 @@ with tab_proforma:
         # Apply Escalations for the next loop
         current_pri *= (1 + (pri_growth / 100))
         current_other *= (1 + (other_inc_growth / 100))
-        current_opex *= (1 + (opex_growth / 100))
 
     # 3. Assemble the Pandas DataFrame
     proforma_data = {
         "1 Potential Rental Income": row_pri,
-        "2 -Vacancy & Credit Losses": {k: -v for k, v in row_vac.items()}, # Negative for display
+        f"2 -Vacancy & Credit Losses ({vacancy_pct}%)": {k: -v for k, v in row_vac.items()}, 
         "3 =Effective Rental Income": row_eri,
         "4 +Other Income": row_other,
         "5 =Gross Operating Income": row_goi,
@@ -488,15 +502,11 @@ with tab_proforma:
         "22 =CASH FLOW BEFORE TAXES": row_cfbt
     }
     
-    # Transpose so years are columns and line items are rows
     df_proforma = pd.DataFrame(proforma_data).T
     
     # 4. Render the Data
     st.markdown("---")
-    st.markdown("### 📊 Cash Flow Analysis Worksheet (Years 1 - 6)")
+    st.markdown("### 📊 Cash Flow Analysis Worksheet")
     
-    # Use Pandas Styler to format all numbers as neat currency without decimals
     styled_df = df_proforma.style.format("${:,.0f}")
-    
-    # Display the dataframe. It will automatically stretch horizontally.
-    st.dataframe(styled_df, use_container_width=True, height=350)
+    st.table(styled_df)
