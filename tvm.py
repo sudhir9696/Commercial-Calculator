@@ -562,41 +562,44 @@ with tab_proforma:
     # 1. Inputs for the Return Calculations
     c_ret1, c_ret2, c_ret3 = st.columns(3)
     with c_ret1:
-        purchase_price = st.number_input("Purchase Price", value=4600000.0, step=50000.0)
+        purchase_price = st.number_input("Original Purchase Price", value=4600000.0, step=50000.0)
     with c_ret2:
-        acq_costs = st.number_input("Acquisition Costs ($)", value=0.0, step=1000.0)
+        acq_costs = st.number_input("Acquisition Costs", value=120000.0, step=5000.0)
     with c_ret3:
-        target_yield_pct = st.number_input("Target Yield / Discount Rate (%)", value=8.0, step=0.5)
+        target_yield_pct = st.number_input("Target Yield (Discount Rate %)", value=8.0, step=0.5)
 
     # 2. Construct the T-Bar (Cash Flow Stream)
-    # The app automatically sums them for your Year 0 Initial Investment
-    total_initial_investment = purchase_price + acq_costs
-    cash_flows = [-total_initial_investment] # EOY 0
+    initial_investment = purchase_price + acq_costs
+    cash_flows = [-initial_investment] # EOY 0
     
     # Loop through the holding period to get operating cash flows
     for year in range(1, int(hold_period) + 1):
         if year == int(hold_period):
-            # Final Year = Operating Cash Flow + Sale Proceeds
             final_cf = row_cfbt[f"Year {year}"] + proceeds_before_tax
             cash_flows.append(final_cf)
         else:
-            # Operating Years = Just Operating Cash Flow
             cash_flows.append(row_cfbt[f"Year {year}"])
 
-    # 3. Pure Python Financial Calculators
+    # 3. Financial Calculators (PV, NPV, IRR)
     target_rate = target_yield_pct / 100.0
     
-    # NPV / Target Purchase Price Math
-    max_purchase_price = sum(cf / ((1 + target_rate) ** i) for i, cf in enumerate(cash_flows[1:], start=1))
+    # Calculate Present Value (PV) of future cash flows
+    present_value = sum(cf / ((1 + target_rate) ** i) for i, cf in enumerate(cash_flows[1:], start=1))
+    
+    # Calculate Net Present Value (NPV)
+    npv = present_value - initial_investment
+
+    # Calculate Adjusted Purchase Price (The CCIM Bridge)
+    adjusted_purchase_price = purchase_price + npv
 
     # IRR Math (Newton-Raphson approximation)
     def calculate_irr(cfs, max_iterations=1000, tolerance=1e-6):
-        rate = 0.10 # initial guess
+        rate = 0.10 
         for _ in range(max_iterations):
-            npv = sum(cf / ((1 + rate) ** i) for i, cf in enumerate(cfs))
+            npv_calc = sum(cf / ((1 + rate) ** i) for i, cf in enumerate(cfs))
             derivative = sum(-i * cf / ((1 + rate) ** (i + 1)) for i, cf in enumerate(cfs))
             if abs(derivative) < 1e-10: return 0.0 
-            new_rate = rate - npv / derivative
+            new_rate = rate - npv_calc / derivative
             if abs(new_rate - rate) < tolerance: return new_rate
             rate = new_rate
         return rate
@@ -614,7 +617,16 @@ with tab_proforma:
     st.table(df_tbar.style.format("${:,.0f}"))
 
     # 5. Display the Final Output Metrics
-    st.markdown("#### Return Outputs")
+    st.markdown("#### Return Outputs & Valuation")
+    
+    # Top Row: Yield Metrics
     c_out1, c_out2 = st.columns(2)
     c_out1.metric("Before-Tax IRR", f"{calculated_irr:.2f}%")
-    c_out2.metric(f"Max Purchase Price at {target_yield_pct}% Yield", f"${max_purchase_price:,.0f}")
+    c_out2.metric(f"Net Present Value (NPV) at {target_yield_pct}%", f"${npv:,.0f}")
+    
+    # Bottom Row: The CCIM Target Yield Bridge
+    st.markdown(f"**Valuation Bridge to achieve {target_yield_pct}% Target Yield:**")
+    st.text(f"  Original Purchase Price:      ${purchase_price:,.0f}")
+    st.text(f"  Plus Net Present Value:       ${npv:,.0f}") # NPV is negative, so adding it deducts it
+    st.text(f"  =========================================")
+    st.text(f"  Adjusted Purchase Price:      ${adjusted_purchase_price:,.0f}")
