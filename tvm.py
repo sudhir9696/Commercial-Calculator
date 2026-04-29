@@ -534,7 +534,16 @@ with tab_proforma:
         
     # The Math
     # Dynamically grab the NOI from the year *after* the holding period (e.g., Year 6)
-    terminal_noi = row_noi[f"Year {hold_period + 1}"]
+    st.write(row_noi.keys()) # Or row_noi.columns if it's a DataFrame
+    
+    year_key = f"Year {hold_period + 1}"
+    if year_key in row_noi:
+        terminal_noi = row_noi[year_key]
+    else:
+        terminal_noi = 0  # Or handle the missing data gracefully
+    st.warning(f"Data for {year_key} not found in the model.")
+    
+    #terminal_noi = row_noi[f"Year {hold_period + 1}"]
     
     if terminal_cap_rate > 0:
         raw_sale_price = terminal_noi / (terminal_cap_rate / 100)
