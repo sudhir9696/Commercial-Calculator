@@ -462,10 +462,12 @@ with tab_proforma:
         
     with c_asm3:
         st.metric("Linked OpEx Ratio (% of GOI)", f"{calculated_expense_ratio * 100:.2f}%")
-        hold_period = st.number_input("Holding Period (Forecast + 1)", value=6, min_value=1, max_value=15)
+        # Ask for the actual holding period (5) instead of the forecast length (6)
+        hold_period = st.number_input("Anticipated Holding Period (Years)", value=5, min_value=1, max_value=15)
 
     # 2. Build the Multi-Year Engine
-    forecast_years = hold_period 
+    # Automatically add 1 year to generate the terminal NOI
+    forecast_years = int(hold_period) + 1
     
     row_pri, row_vac, row_eri, row_other, row_goi = {}, {}, {}, {}, {}
     row_opex, row_noi, row_ads, row_cfbt = {}, {}, {}, {}
@@ -533,21 +535,11 @@ with tab_proforma:
         cost_of_sale_pct = st.number_input("Cost of Sale (%)", value=3.0, step=0.5)
         
     # The Math
-    # Dynamically grab the NOI from the year *after* the holding period (e.g., Year 6)
-    st.write(row_noi.keys()) # Or row_noi.columns if it's a DataFrame
-    
-    year_key = f"Year {hold_period + 1}"
-    if year_key in row_noi:
-        terminal_noi = row_noi[year_key]
-    else:
-        terminal_noi = 0  # Or handle the missing data gracefully
-    st.warning(f"Data for {year_key} not found in the model.")
-    
-    #terminal_noi = row_noi[f"Year {hold_period + 1}"]
+    # Dynamically grab the NOI from the final forecasted year
+    terminal_noi = row_noi.get(f"Year {forecast_years}", 0.0) 
     
     if terminal_cap_rate > 0:
         raw_sale_price = terminal_noi / (terminal_cap_rate / 100)
-        # Round to the nearest thousand per CCIM standards
         rounded_sale_price = round(raw_sale_price / 1000) * 1000
     else:
         rounded_sale_price = 0.0
@@ -556,7 +548,7 @@ with tab_proforma:
     proceeds_before_tax = rounded_sale_price - cost_of_sale_dollars
 
     # Display the Results
-    st.info(f"**Terminal NOI (Year {hold_period + 1}):** ${terminal_noi:,.0f} | Used to calculate sale price at end of Year {hold_period}.")
+    st.info(f"**Terminal NOI (Year {forecast_years}):** ${terminal_noi:,.0f} | Used to calculate sale price at end of Year {hold_period}.")
     
     c_res1, c_res2, c_res3 = st.columns(3)
     c_res1.metric("Projected Sale Price", f"${rounded_sale_price:,.0f}")
