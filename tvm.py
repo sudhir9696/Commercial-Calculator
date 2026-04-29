@@ -626,11 +626,28 @@ with tab_proforma:
     c_out2.metric(f"Net Present Value (NPV) at {target_yield_pct}%", f"${npv:,.0f}")
     
     # Bottom Row: The CCIM Target Yield Bridge
-    st.markdown(f"**Valuation Bridge to achieve {target_yield_pct}% Target Yield:**")
-    st.text(f"  Original Purchase Price:      ${purchase_price:,.0f}")
-    st.text(f"  Plus Net Present Value:       ${npv:,.0f}") 
-    st.text(f"  =========================================")
-    st.text(f"  Adjusted Purchase Price:      ${adjusted_purchase_price:,.0f}")
-    st.text(f"  Plus Acquisition Cost:        ${acq_costs:,.0f}")
-    st.text(f"  =========================================")
-    st.text(f"  Adjusted Initial Investment:  ${adjusted_initial_investment:,.0f}")
+    st.markdown(f"#### Valuation Bridge to achieve {target_yield_pct}% Target Yield")
+    
+    # Create a dictionary of the steps
+    bridge_data = {
+        "Line Item": [
+            "Original Purchase Price",
+            "Plus: Net Present Value",
+            "Equals: Adjusted Purchase Price",
+            "Plus: Acquisition Costs",
+            "Equals: Adjusted Initial Investment"
+        ],
+        "Amount": [
+            purchase_price,
+            npv,  # This is negative, representing the deficit
+            adjusted_purchase_price,
+            acq_costs,
+            adjusted_initial_investment
+        ]
+    }
+    
+    # Convert to a DataFrame and set the Line Item as the index to hide the row numbers
+    df_bridge = pd.DataFrame(bridge_data).set_index("Line Item")
+    
+    # Render it as a clean, formatted table
+    st.table(df_bridge.style.format("${:,.0f}"))
