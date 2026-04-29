@@ -560,14 +560,18 @@ with tab_proforma:
     st.markdown("### 📈 Investment Return Metrics (Before Tax / Unleveraged)")
     
     # 1. Inputs for the Return Calculations
-    c_ret1, c_ret2 = st.columns(2)
+    c_ret1, c_ret2, c_ret3 = st.columns(3)
     with c_ret1:
-        initial_investment = st.number_input("Initial Purchase Price (Year 0)", value=4600000.0, step=50000.0)
+        purchase_price = st.number_input("Purchase Price", value=4600000.0, step=50000.0)
     with c_ret2:
+        acq_costs = st.number_input("Acquisition Costs ($)", value=0.0, step=1000.0)
+    with c_ret3:
         target_yield_pct = st.number_input("Target Yield / Discount Rate (%)", value=8.0, step=0.5)
 
     # 2. Construct the T-Bar (Cash Flow Stream)
-    cash_flows = [-initial_investment] # EOY 0
+    # The app automatically sums them for your Year 0 Initial Investment
+    total_initial_investment = purchase_price + acq_costs
+    cash_flows = [-total_initial_investment] # EOY 0
     
     # Loop through the holding period to get operating cash flows
     for year in range(1, int(hold_period) + 1):
