@@ -307,47 +307,58 @@ with tab_screener:
     eri = pri - vac_loss
     goi = eri + other_income
 
-    # --- SECTION 3: OPERATING EXPENSES (DYNAMIC) ---
+   # --- SECTION 3: OPERATING EXPENSES (DYNAMIC) ---
     st.markdown("### 3. Operating Expenses")
-    st.caption("All fields default to 0. The APOD ledger below will dynamically update as you enter values.")
-    
-    # 3-Column Layout for Itemized Expenses
-    c_ex1, c_ex2, c_ex3 = st.columns(3)
-    
-    with c_ex1:
-        re_taxes = st.number_input("Real Estate Taxes", value=0.0, step=1000.0)
-        pp_taxes = st.number_input("Personal Property Taxes", value=0.0, step=100.0)
-        insurance = st.number_input("Property Insurance", value=0.0, step=1000.0)
-        management = st.number_input("Off Site Management", value=0.0, step=1000.0)
-        payroll = st.number_input("Payroll", value=0.0, step=1000.0)
-        benefits = st.number_input("Expenses/Benefits", value=0.0, step=1000.0)
 
-    with c_ex2:
-        workers_comp = st.number_input("Taxes/Worker's Comp", value=0.0, step=100.0)
-        repairs = st.number_input("Repairs and Maintenance", value=0.0, step=1000.0)
-        electric = st.number_input("Electric - Common Area", value=0.0, step=100.0)
-        water = st.number_input("Water & Sewer", value=0.0, step=100.0)
-        gas = st.number_input("Natural Gas", value=0.0, step=100.0)
-        accounting = st.number_input("Accounting and Legal", value=0.0, step=100.0)
+    # 1. Initialize all itemized variables to 0 up front. 
+    # (This prevents the APOD table at the bottom from crashing if they are hidden)
+    re_taxes = pp_taxes = insurance = management = payroll = benefits = 0.0
+    workers_comp = repairs = electric = water = gas = accounting = 0.0
+    licenses = advertising = supplies = hvac = landscaping = other_misc = 0.0
 
-    with c_ex3:
-        licenses = st.number_input("Licenses/Permits", value=0.0, step=100.0)
-        advertising = st.number_input("Advertising", value=0.0, step=1000.0)
-        supplies = st.number_input("Supplies", value=0.0, step=100.0)
-        hvac = st.number_input("HVAC Repair/Filters", value=0.0, step=100.0)
-        landscaping = st.number_input("Landscaping", value=0.0, step=100.0)
-        other_misc = st.number_input("Other Miscellaneous", value=0.0, step=100.0)
+    # 2. The new Radio Toggle right at the top
+    expense_method = st.radio(
+        "How would you like to calculate Operating Expenses?",
+        ["Direct Total ($)", "Market Ratio (% of GOI)", "Itemized List"],
+        horizontal=True
+    )
 
-    # --- EXPENSE CALCULATION LOGIC ---
-    st.markdown("#### Expense Calculation Method")
-    use_ratio = st.checkbox("Use Market Override Ratio instead of Itemized Expenses?", value=False)
-    
-    if use_ratio:
-        # If checked, you force a flat market ratio (like the 40% from Page 9.3)
-        exp_ratio_override = st.number_input("Market Expense Ratio Override (% of GOI)", value=40.0, step=1.0)
+    # 3. Dynamic UI based on the selected method
+    if expense_method == "Direct Total ($)":
+        final_opex = st.number_input("Total Operating Expenses ($)", value=176500.0, step=1000.0)
+        
+    elif expense_method == "Market Ratio (% of GOI)":
+        exp_ratio_override = st.number_input("Market Expense Ratio (% of GOI)", value=40.0, step=1.0)
         final_opex = goi * (exp_ratio_override / 100)
-    else:
-        # If unchecked, the app sums up all the raw itemized variables you typed in
+        
+    else: # Itemized List
+        st.caption("Enter itemized expenses below. The APOD ledger will dynamically update.")
+        c_ex1, c_ex2, c_ex3 = st.columns(3)
+        
+        with c_ex1:
+            re_taxes = st.number_input("Real Estate Taxes", value=0.0, step=1000.0)
+            pp_taxes = st.number_input("Personal Property Taxes", value=0.0, step=100.0)
+            insurance = st.number_input("Property Insurance", value=0.0, step=1000.0)
+            management = st.number_input("Off Site Management", value=0.0, step=1000.0)
+            payroll = st.number_input("Payroll", value=0.0, step=1000.0)
+            benefits = st.number_input("Expenses/Benefits", value=0.0, step=1000.0)
+
+        with c_ex2:
+            workers_comp = st.number_input("Taxes/Worker's Comp", value=0.0, step=100.0)
+            repairs = st.number_input("Repairs and Maintenance", value=0.0, step=1000.0)
+            electric = st.number_input("Electric - Common Area", value=0.0, step=100.0)
+            water = st.number_input("Water & Sewer", value=0.0, step=100.0)
+            gas = st.number_input("Natural Gas", value=0.0, step=100.0)
+            accounting = st.number_input("Accounting and Legal", value=0.0, step=100.0)
+
+        with c_ex3:
+            licenses = st.number_input("Licenses/Permits", value=0.0, step=100.0)
+            advertising = st.number_input("Advertising", value=0.0, step=1000.0)
+            supplies = st.number_input("Supplies", value=0.0, step=100.0)
+            hvac = st.number_input("HVAC Repair/Filters", value=0.0, step=100.0)
+            landscaping = st.number_input("Landscaping", value=0.0, step=100.0)
+            other_misc = st.number_input("Other Miscellaneous", value=0.0, step=100.0)
+
         final_opex = sum([
             re_taxes, pp_taxes, insurance, management, payroll, benefits,
             workers_comp, repairs, electric, water, gas, accounting,
@@ -355,14 +366,13 @@ with tab_screener:
         ])
 
     # --- AUTOMATIC % GOI CALCULATOR ---
-    # The app calculates exactly what your ratio is based on the data above
+    # Calculates the true ratio regardless of which method you chose above
     if goi > 0:
         actual_ratio = (final_opex / goi) * 100
     else:
         actual_ratio = 0.0
         
-    # Display the calculated ratio dynamically on the screen
-    st.metric("Actual Operating Expense Ratio", f"{actual_ratio:.2f}% of GOI", border=True)
+    st.metric("Effective Operating Expense Ratio", f"{actual_ratio:.2f}% of GOI", border=True)
     
     
 
