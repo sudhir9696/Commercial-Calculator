@@ -589,8 +589,9 @@ with tab_proforma:
     # Calculate Net Present Value (NPV)
     npv = present_value - initial_investment
 
-    # Calculate Adjusted Purchase Price (The CCIM Bridge)
+    # Calculate Adjusted Purchase Price & Initial Investment (The CCIM Bridge)
     adjusted_purchase_price = purchase_price + npv
+    adjusted_initial_investment = adjusted_purchase_price + acq_costs # <-- The missing step!
 
     # IRR Math (Newton-Raphson approximation)
     def calculate_irr(cfs, max_iterations=1000, tolerance=1e-6):
@@ -627,6 +628,9 @@ with tab_proforma:
     # Bottom Row: The CCIM Target Yield Bridge
     st.markdown(f"**Valuation Bridge to achieve {target_yield_pct}% Target Yield:**")
     st.text(f"  Original Purchase Price:      ${purchase_price:,.0f}")
-    st.text(f"  Plus Net Present Value:       ${npv:,.0f}") # NPV is negative, so adding it deducts it
+    st.text(f"  Plus Net Present Value:       ${npv:,.0f}") 
     st.text(f"  =========================================")
     st.text(f"  Adjusted Purchase Price:      ${adjusted_purchase_price:,.0f}")
+    st.text(f"  Plus Acquisition Cost:        ${acq_costs:,.0f}")
+    st.text(f"  =========================================")
+    st.text(f"  Adjusted Initial Investment:  ${adjusted_initial_investment:,.0f}")
