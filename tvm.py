@@ -520,3 +520,36 @@ with tab_proforma:
     
     styled_df = df_proforma.style.format("${:,.0f}")
     st.table(styled_df)
+    
+    # --- SECTION 5: REVERSION (EXIT) CALCULATIONS ---
+    st.markdown("---")
+    st.markdown("### 🚪 Disposition (Sale at End of Holding Period)")
+    
+    # Exit Inputs
+    c_exit1, c_exit2, c_exit3 = st.columns(3)
+    with c_exit1:
+        terminal_cap_rate = st.number_input("Terminal Cap Rate (%)", value=6.0, step=0.25)
+    with c_exit2:
+        cost_of_sale_pct = st.number_input("Cost of Sale (%)", value=3.0, step=0.5)
+        
+    # The Math
+    # Dynamically grab the NOI from the year *after* the holding period (e.g., Year 6)
+    terminal_noi = row_noi[f"Year {hold_period + 1}"]
+    
+    if terminal_cap_rate > 0:
+        raw_sale_price = terminal_noi / (terminal_cap_rate / 100)
+        # Round to the nearest thousand per CCIM standards
+        rounded_sale_price = round(raw_sale_price / 1000) * 1000
+    else:
+        rounded_sale_price = 0.0
+        
+    cost_of_sale_dollars = rounded_sale_price * (cost_of_sale_pct / 100)
+    proceeds_before_tax = rounded_sale_price - cost_of_sale_dollars
+
+    # Display the Results
+    st.info(f"**Terminal NOI (Year {hold_period + 1}):** ${terminal_noi:,.0f} | Used to calculate sale price at end of Year {hold_period}.")
+    
+    c_res1, c_res2, c_res3 = st.columns(3)
+    c_res1.metric("Projected Sale Price", f"${rounded_sale_price:,.0f}")
+    c_res2.metric("Cost of Sale", f"(${cost_of_sale_dollars:,.0f})")
+    c_res3.metric("Sale Proceeds (Before Tax)", f"${proceeds_before_tax:,.0f}")
