@@ -434,166 +434,194 @@ with tab_screener:
     st.table(df_apod.set_index("Line Item"))
 
 # ==========================================
-# TAB 5: MULTI-YEAR PRO FORMA (Cash Flow Analysis Worksheet)
+# TAB 5: MULTI-YEAR PRO FORMA & AFTER-TAX MODEL
 # ==========================================
 with tab_proforma:
-    st.header("Cash Flow Analysis Worksheet")
-    st.markdown("Multi-Year Forecast (Data linked directly from Tab 4: APOD)")
+    st.header("Cash Flow Analysis Worksheet (After-Tax)")
+    st.markdown("Multi-Year Forecast including Cost Recovery, Tax Liability, and Reversion.")
 
-    # --- THE AUTOMATION ENGINE ---
-    # Calculate the dynamic Expense Ratio using the live data from Tab 4
+    # --- 1. ACQUISITION & TAX ASSUMPTIONS (Moved to top) ---
+    st.markdown("### 1. Acquisition & Tax Assumptions")
+    c_acq1, c_acq2, c_acq3 = st.columns(3)
+    
+    with c_acq1:
+        purchase_price = st.number_input("Purchase Price", value=3750000.0, step=50000.0)
+        acq_costs = st.number_input("Acquisition Costs", value=80000.0, step=5000.0)
+        initial_investment = purchase_price + acq_costs
+        
+    with c_acq2:
+        improvements_pct = st.number_input("Improvements Allocation (%)", value=70.0, step=5.0)
+        property_class = st.selectbox("IRS Recovery Period", ["Non-Residential (39 Years)", "Residential (27.5 Years)"])
+        
+    with c_acq3:
+        ordinary_tax_rate = st.number_input("Ordinary Income Tax Rate (%)", value=37.0, step=1.0)
+        cg_tax_rate = st.number_input("Capital Gains Tax Rate (%)", value=20.0, step=1.0)
+        recapture_tax_rate = st.number_input("Recapture Tax Rate (%)", value=25.0, step=1.0)
+
+    # Calculate Original Basis & Improvements Basis
+    st.info(f"**Original Basis:** ${initial_investment:,.0f} | **Depreciable Improvements:** ${(initial_investment * (improvements_pct / 100)):,.0f}")
+
+    # --- 2. GROWTH ASSUMPTIONS ---
+    st.markdown("### 2. Future Growth Assumptions")
+    
     if goi > 0:
         calculated_expense_ratio = final_opex / goi
     else:
         calculated_expense_ratio = 0.0
 
-    # 1. Growth Assumptions Input
-    st.markdown("### 1. Future Growth Assumptions")
     c_asm1, c_asm2, c_asm3 = st.columns(3)
-    
     with c_asm1:
-        # st.metric displays data read-only so it stays perfectly synced with Tab 4
         st.metric("Year 1 PRI (Linked)", f"${pri:,.0f}")
-        pri_growth = st.number_input("Annual PRI Growth Rate (%)", value=3.0, step=0.1)
-    
+        pri_growth = st.number_input("Annual PRI Growth Rate (%)", value=2.5, step=0.1)
     with c_asm2:
         st.metric("Year 1 Other Income (Linked)", f"${other_income:,.0f}")
-        other_inc_growth = st.number_input("Other Income Growth (%)", value=2.0, step=0.1)
-        
+        other_inc_growth = st.number_input("Other Income Growth (%)", value=0.0, step=0.1)
     with c_asm3:
         st.metric("Linked OpEx Ratio (% of GOI)", f"{calculated_expense_ratio * 100:.2f}%")
-        # Ask for the actual holding period (5) instead of the forecast length (6)
         hold_period = st.number_input("Anticipated Holding Period (Years)", value=5, min_value=1, max_value=15)
 
-    # 2. Build the Multi-Year Engine
-    # Automatically add 1 year to generate the terminal NOI
-    forecast_years = int(hold_period) + 1
+    # --- 3. BUILD THE MULTI-YEAR ENGINE ---
+    forecast_years = int(hold_period) + 1 
     
+    # Dictionaries for Before-Tax
     row_pri, row_vac, row_eri, row_other, row_goi = {}, {}, {}, {}, {}
     row_opex, row_noi, row_ads, row_cfbt = {}, {}, {}, {}
     
-    # Starting values pull strictly from Tab 4's variables
+    # Dictionaries for After-Tax
+    row_cost_recovery, row_taxable_income, row_tax_liability, row_cfat = {}, {}, {}, {}
+    
     current_pri = pri
     current_other = other_income
-    annual_ads = 0.0 # Keeping at 0 to match the "Without Financing" textbook example
+    annual_ads = 0.0 
+    
+    basis_of_improvements = initial_investment * (improvements_pct / 100)
+    total_cost_recovery_taken = 0.0
+
+    # IRS Mid-Month Convention Rates (Assumes Month 1 Acq, Month 12 Disp)
+    if property_class == "Non-Residential (39 Years)":
+        acq_cr_pct, hold_cr_pct, disp_cr_pct = 0.02461, 0.02564, 0.02461
+    else:
+        acq_cr_pct, hold_cr_pct, disp_cr_pct = 0.03485, 0.03636, 0.03485
     
     for year in range(1, forecast_years + 1):
         col_name = f"Year {year}"
         
-        # Calculate Space Market
+        # Operations (Before Tax)
         row_pri[col_name] = current_pri
-        
-        # Vacancy pulls the percentage established in Tab 4!
         row_vac[col_name] = current_pri * (vacancy_pct / 100)
         row_eri[col_name] = current_pri - row_vac[col_name]
         row_other[col_name] = current_other
         row_goi[col_name] = row_eri[col_name] + row_other[col_name]
-        
-        # Calculate Expenses & NOI (Using the dynamically calculated ratio)
         row_opex[col_name] = row_goi[col_name] * calculated_expense_ratio
         row_noi[col_name] = row_goi[col_name] - row_opex[col_name]
-        
-        # Calculate CFBT
         row_ads[col_name] = annual_ads
         row_cfbt[col_name] = row_noi[col_name] - row_ads[col_name]
         
-        # Apply Escalations for the next loop
+        # Tax Calculations (Cost Recovery)
+        if year == 1:
+            cr_deduction = basis_of_improvements * acq_cr_pct
+        elif year == int(hold_period):
+            cr_deduction = basis_of_improvements * disp_cr_pct
+        else:
+            cr_deduction = basis_of_improvements * hold_cr_pct
+            
+        if year <= int(hold_period):
+            total_cost_recovery_taken += cr_deduction
+            
+        row_cost_recovery[col_name] = cr_deduction
+        row_taxable_income[col_name] = row_noi[col_name] - cr_deduction
+        
+        # Tax Liability (Savings)
+        tax_liab = row_taxable_income[col_name] * (ordinary_tax_rate / 100)
+        row_tax_liability[col_name] = tax_liab
+        
+        # Cash Flow After Tax
+        row_cfat[col_name] = row_cfbt[col_name] - tax_liab
+        
+        # Escalations for next year
         current_pri *= (1 + (pri_growth / 100))
         current_other *= (1 + (other_inc_growth / 100))
 
-    # 3. Assemble the Pandas DataFrame
+    # --- 4. RENDER THE OPERATIONS TABLE ---
+    st.markdown("---")
+    st.markdown("### 📊 Cash Flow Analysis Worksheet (Operations)")
+    
     proforma_data = {
-        "1 Potential Rental Income": row_pri,
-        f"2 -Vacancy & Credit Losses ({vacancy_pct}%)": {k: -v for k, v in row_vac.items()}, 
-        "3 =Effective Rental Income": row_eri,
-        "4 +Other Income": row_other,
-        "5 =Gross Operating Income": row_goi,
-        "6 -Operating Expenses": {k: -v for k, v in row_opex.items()},
-        "7 =NET OPERATING INCOME": row_noi,
-        "18 -Annual Debt Service": {k: -v for k, v in row_ads.items()},
-        "22 =CASH FLOW BEFORE TAXES": row_cfbt
+        "Potential Rental Income": row_pri,
+        f" -Vacancy & Credit Losses": {k: -v for k, v in row_vac.items()}, 
+        " =Effective Rental Income": row_eri,
+        " =Gross Operating Income": row_goi,
+        " -Operating Expenses": {k: -v for k, v in row_opex.items()},
+        " =NET OPERATING INCOME": row_noi,
+        " -Cost Recovery": {k: -v for k, v in row_cost_recovery.items()},
+        " =Taxable Income": row_taxable_income,
+        " -Tax Liability (Savings)": {k: -v for k, v in row_tax_liability.items()},
+        " =CASH FLOW BEFORE TAXES": row_cfbt,
+        " =CASH FLOW AFTER TAXES": row_cfat
     }
     
     df_proforma = pd.DataFrame(proforma_data).T
-    
-    # 4. Render the Data
+    st.dataframe(df_proforma.style.format("${:,.0f}"), use_container_width=True)
+
+    # --- 5. REVERSION (SALE) CALCULATIONS ---
     st.markdown("---")
-    st.markdown("### 📊 Cash Flow Analysis Worksheet")
+    st.markdown("### 🚪 Disposition & Alternative Cash Sales Worksheet")
     
-    styled_df = df_proforma.style.format("${:,.0f}")
-    st.table(styled_df)
-    
-    # --- SECTION 5: REVERSION (EXIT) CALCULATIONS ---
-    st.markdown("---")
-    st.markdown("### 🚪 Disposition (Sale at End of Holding Period)")
-    
-    # Exit Inputs
-    c_exit1, c_exit2, c_exit3 = st.columns(3)
+    c_exit1, c_exit2 = st.columns(2)
     with c_exit1:
-        terminal_cap_rate = st.number_input("Terminal Cap Rate (%)", value=6.0, step=0.25)
+        terminal_cap_rate = st.number_input("Terminal Cap Rate (%)", value=7.5, step=0.25)
     with c_exit2:
         cost_of_sale_pct = st.number_input("Cost of Sale (%)", value=3.0, step=0.5)
         
-    # The Math
-    # Dynamically grab the NOI from the final forecasted year
     terminal_noi = row_noi.get(f"Year {forecast_years}", 0.0) 
     
     if terminal_cap_rate > 0:
-        raw_sale_price = terminal_noi / (terminal_cap_rate / 100)
-        rounded_sale_price = round(raw_sale_price / 1000) * 1000
+        rounded_sale_price = round((terminal_noi / (terminal_cap_rate / 100)) / 1000) * 1000
     else:
         rounded_sale_price = 0.0
         
     cost_of_sale_dollars = rounded_sale_price * (cost_of_sale_pct / 100)
     proceeds_before_tax = rounded_sale_price - cost_of_sale_dollars
 
-    # Display the Results
-    st.info(f"**Terminal NOI (Year {forecast_years}):** ${terminal_noi:,.0f} | Used to calculate sale price at end of Year {hold_period}.")
+    # After-Tax Disposition Math
+    adjusted_basis = initial_investment - total_cost_recovery_taken
+    gain_on_sale = rounded_sale_price - cost_of_sale_dollars - adjusted_basis
     
-    c_res1, c_res2, c_res3 = st.columns(3)
-    c_res1.metric("Projected Sale Price", f"${rounded_sale_price:,.0f}")
-    c_res2.metric("Cost of Sale", f"(${cost_of_sale_dollars:,.0f})")
-    c_res3.metric("Sale Proceeds (Before Tax)", f"${proceeds_before_tax:,.0f}")
+    cap_gain_appreciation = max(0.0, gain_on_sale - total_cost_recovery_taken)
     
-    # --- SECTION 6: RETURN METRICS (IRR & NPV) ---
-    st.markdown("---")
-    st.markdown("### 📈 Investment Return Metrics (Before Tax / Unleveraged)")
+    # Recapture limited to total gain on sale
+    recaptured_amount = min(total_cost_recovery_taken, max(0.0, gain_on_sale))
+    tax_on_recapture = recaptured_amount * (recapture_tax_rate / 100)
     
-    # 1. Inputs for the Return Calculations
-    c_ret1, c_ret2, c_ret3 = st.columns(3)
-    with c_ret1:
-        purchase_price = st.number_input("Original Purchase Price", value=4600000.0, step=50000.0)
-    with c_ret2:
-        acq_costs = st.number_input("Acquisition Costs", value=120000.0, step=5000.0)
-    with c_ret3:
-        target_yield_pct = st.number_input("Target Yield (Discount Rate %)", value=8.0, step=0.5)
+    tax_on_cap_gain = cap_gain_appreciation * (cg_tax_rate / 100)
+    total_tax_on_sale = tax_on_recapture + tax_on_cap_gain
+    proceeds_after_tax = proceeds_before_tax - total_tax_on_sale
 
-    # 2. Construct the T-Bar (Cash Flow Stream)
-    initial_investment = purchase_price + acq_costs
-    cash_flows = [-initial_investment] # EOY 0
+    # Render Disposition Output
+    st.text(f"  Projected Sale Price:            ${rounded_sale_price:,.0f}")
+    st.text(f"  - Cost of Sale:                 (${cost_of_sale_dollars:,.0f})")
+    st.text(f"  =================================================")
+    st.text(f"  Sale Proceeds Before Tax:        ${proceeds_before_tax:,.0f}")
+    st.text(f"  - Total Tax Liability on Sale:  (${total_tax_on_sale:,.0f})")
+    st.text(f"  =================================================")
+    st.text(f"  Sale Proceeds After Tax (SPAT):  ${proceeds_after_tax:,.0f}")
+
+    # --- 6. RETURN METRICS (T-BAR & IRR) ---
+    st.markdown("---")
+    st.markdown("### 📈 Investment Return Metrics")
     
-    # Loop through the holding period to get operating cash flows
+    # Construct T-Bars
+    cfbt_stream = [-initial_investment]
+    cfat_stream = [-initial_investment]
+    
     for year in range(1, int(hold_period) + 1):
         if year == int(hold_period):
-            final_cf = row_cfbt[f"Year {year}"] + proceeds_before_tax
-            cash_flows.append(final_cf)
+            cfbt_stream.append(row_cfbt[f"Year {year}"] + proceeds_before_tax)
+            cfat_stream.append(row_cfat[f"Year {year}"] + proceeds_after_tax)
         else:
-            cash_flows.append(row_cfbt[f"Year {year}"])
+            cfbt_stream.append(row_cfbt[f"Year {year}"])
+            cfat_stream.append(row_cfat[f"Year {year}"])
 
-    # 3. Financial Calculators (PV, NPV, IRR)
-    target_rate = target_yield_pct / 100.0
-    
-    # Calculate Present Value (PV) of future cash flows
-    present_value = sum(cf / ((1 + target_rate) ** i) for i, cf in enumerate(cash_flows[1:], start=1))
-    
-    # Calculate Net Present Value (NPV)
-    npv = present_value - initial_investment
-
-    # Calculate Adjusted Purchase Price & Initial Investment (The CCIM Bridge)
-    adjusted_purchase_price = purchase_price + npv
-    adjusted_initial_investment = adjusted_purchase_price + acq_costs # <-- The missing step!
-
-    # IRR Math (Newton-Raphson approximation)
     def calculate_irr(cfs, max_iterations=1000, tolerance=1e-6):
         rate = 0.10 
         for _ in range(max_iterations):
@@ -605,49 +633,15 @@ with tab_proforma:
             rate = new_rate
         return rate
         
-    calculated_irr = calculate_irr(cash_flows) * 100
+    irr_bt = calculate_irr(cfbt_stream) * 100
+    irr_at = calculate_irr(cfat_stream) * 100
+    
+    if irr_bt > 0:
+        effective_tax_rate = ((irr_bt - irr_at) / irr_bt) * 100
+    else:
+        effective_tax_rate = 0.0
 
-    # 4. Display the T-Bar Table
-    st.markdown("#### The 'T-Bar' (Cash Flow Stream)")
-    tbar_dict = {"EOY": [], "Cash Flow ($)": []}
-    for i, cf in enumerate(cash_flows):
-        tbar_dict["EOY"].append(f"Year {i}")
-        tbar_dict["Cash Flow ($)"].append(cf)
-    
-    df_tbar = pd.DataFrame(tbar_dict).set_index("EOY")
-    st.table(df_tbar.style.format("${:,.0f}"))
-
-    # 5. Display the Final Output Metrics
-    st.markdown("#### Return Outputs & Valuation")
-    
-    # Top Row: Yield Metrics
-    c_out1, c_out2 = st.columns(2)
-    c_out1.metric("Before-Tax IRR", f"{calculated_irr:.2f}%")
-    c_out2.metric(f"Net Present Value (NPV) at {target_yield_pct}%", f"${npv:,.0f}")
-    
-    # Bottom Row: The CCIM Target Yield Bridge
-    st.markdown(f"#### Valuation Bridge to achieve {target_yield_pct}% Target Yield")
-    
-    # Create a dictionary of the steps
-    bridge_data = {
-        "Line Item": [
-            "Original Purchase Price",
-            "Plus: Net Present Value",
-            "Equals: Adjusted Purchase Price",
-            "Plus: Acquisition Costs",
-            "Equals: Adjusted Initial Investment"
-        ],
-        "Amount": [
-            purchase_price,
-            npv,  # This is negative, representing the deficit
-            adjusted_purchase_price,
-            acq_costs,
-            adjusted_initial_investment
-        ]
-    }
-    
-    # Convert to a DataFrame and set the Line Item as the index to hide the row numbers
-    df_bridge = pd.DataFrame(bridge_data).set_index("Line Item")
-    
-    # Render it as a clean, formatted table
-    st.table(df_bridge.style.format("${:,.0f}"))
+    c_out1, c_out2, c_out3 = st.columns(3)
+    c_out1.metric("Before-Tax IRR", f"{irr_bt:.2f}%")
+    c_out2.metric("After-Tax IRR", f"{irr_at:.2f}%")
+    c_out3.metric("Effective Tax Rate", f"{effective_tax_rate:.2f}%")
