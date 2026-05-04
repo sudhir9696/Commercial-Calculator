@@ -599,14 +599,31 @@ with tab_proforma:
     total_tax_on_sale = tax_on_recapture + tax_on_cap_gain
     proceeds_after_tax = proceeds_before_tax - total_tax_on_sale
 
-    # Render Disposition Output
-    st.text(f"  Projected Sale Price:            ${rounded_sale_price:,.0f}")
-    st.text(f"  - Cost of Sale:                 (${cost_of_sale_dollars:,.0f})")
-    st.text(f"  =================================================")
-    st.text(f"  Sale Proceeds Before Tax:        ${proceeds_before_tax:,.0f}")
-    st.text(f"  - Total Tax Liability on Sale:  (${total_tax_on_sale:,.0f})")
-    st.text(f"  =================================================")
-    st.text(f"  Sale Proceeds After Tax (SPAT):  ${proceeds_after_tax:,.0f}")
+    # Render Disposition Output as a professional ledger
+    st.markdown("#### Sale Proceeds Waterfall")
+    
+    disposition_data = {
+        "Line Item": [
+            "Projected Sale Price",
+            "Less: Cost of Sale",
+            "Sale Proceeds Before Tax",
+            "Less: Total Tax Liability on Sale",
+            "Sale Proceeds After Tax (SPAT)"
+        ],
+        "Amount": [
+            rounded_sale_price,
+            -cost_of_sale_dollars,  # Negative for display
+            proceeds_before_tax,
+            -total_tax_on_sale,     # Negative for display
+            proceeds_after_tax
+        ]
+    }
+    
+    # Convert to DataFrame and set index to hide row numbers
+    df_disp = pd.DataFrame(disposition_data).set_index("Line Item")
+    
+    # Render using Streamlit's static table for perfect alignment
+    st.table(df_disp.style.format("${:,.0f}"))
 
     # --- 6. RETURN METRICS (T-BAR & IRR) ---
     st.markdown("---")
