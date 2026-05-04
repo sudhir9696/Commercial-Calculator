@@ -605,6 +605,13 @@ with tab_proforma:
     tax_on_cap_gain = cap_gain_appreciation * (cg_tax_rate / 100)
     total_tax_on_sale = tax_on_recapture + tax_on_cap_gain
     proceeds_after_tax = proceeds_before_tax - total_tax_on_sale
+    
+    # Professional Render of the Tax Math
+    st.markdown("#### After-Tax Disposition Metrics")
+    c_disp1, c_disp2, c_disp3 = st.columns(3)
+    c_disp1.metric("Adjusted Basis at Sale", f"${adjusted_basis:,.0f}")
+    c_disp2.metric("Total Gain on Sale", f"${gain_on_sale:,.0f}")
+    c_disp3.metric("Tax on Capital Gains", f"${tax_on_cap_gain:,.0f}")
 
     # Render Disposition Output as a professional ledger
     st.markdown("#### Sale Proceeds Waterfall")
