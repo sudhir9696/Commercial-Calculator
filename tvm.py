@@ -480,6 +480,13 @@ with tab_proforma:
     # --- 3. BUILD THE MULTI-YEAR ENGINE ---
     forecast_years = int(hold_period) + 1 
     
+    # --- REDEFINE EXPENSE RATIO ---
+    # Calculate the dynamic Expense Ratio using the live data from Tab 4
+    if goi > 0:
+        calculated_expense_ratio = final_opex / goi
+    else:
+        calculated_expense_ratio = 0.0
+    
     # Dictionaries for Before-Tax
     row_pri, row_vac, row_eri, row_other, row_goi = {}, {}, {}, {}, {}
     row_opex, row_noi, row_ads, row_cfbt = {}, {}, {}, {}
@@ -511,8 +518,8 @@ with tab_proforma:
         row_other[col_name] = current_other
         row_goi[col_name] = row_eri[col_name] + row_other[col_name]
         
-        # Calculate Expenses using flat annual growth
-        row_opex[col_name] = current_opex 
+        # Calculate Expenses dynamically using the Ratio linked from Tab 4
+        row_opex[col_name] = row_goi[col_name] * calculated_expense_ratio
         
         row_noi[col_name] = row_goi[col_name] - row_opex[col_name]
         row_ads[col_name] = annual_ads
@@ -542,7 +549,7 @@ with tab_proforma:
         # Escalations for next year
         current_pri *= (1 + (pri_growth / 100))
         current_other *= (1 + (other_inc_growth / 100))
-        current_opex *= (1 + (opex_growth / 100)) # Grow OpEx by 3% annually
+        
 
     # --- 4. RENDER THE OPERATIONS TABLE ---
     st.markdown("---")
