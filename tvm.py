@@ -606,75 +606,88 @@ with tab_proforma:
     total_tax_on_sale = tax_on_recapture + tax_on_cap_gain
     proceeds_after_tax = proceeds_before_tax - total_tax_on_sale
     
-    # Professional Render of the Tax Math
-    st.markdown("#### After-Tax Disposition Metrics")
-    c_disp1, c_disp2, c_disp3 = st.columns(3)
-    c_disp1.metric("Adjusted Basis at Sale", f"${adjusted_basis:,.0f}")
-    c_disp2.metric("Total Gain on Sale", f"${gain_on_sale:,.0f}")
-    c_disp3.metric("Tax on Capital Gains", f"${tax_on_cap_gain:,.0f}")
-
-    # Render Disposition Output as a professional ledger
-    st.markdown("#### Sale Proceeds Waterfall")
+    # --- Professional Render of the CCIM Alternative Cash Sales Worksheet ---
+    st.markdown("#### Alternative Cash Sales Worksheet")
     
-    disposition_data = {
+    acsw_data = {
         "Line Item": [
-            "Projected Sale Price",
-            "Less: Cost of Sale",
-            "Sale Proceeds Before Tax",
-            "Less: Total Tax Liability on Sale",
-            "Sale Proceeds After Tax (SPAT)"
+            "CALCULATION OF ADJUSTED BASIS:",
+            "1 Basis at Acquisition",
+            "2 +Capital Additions",
+            "3 -Cost Recovery (Depreciation) Taken",
+            "4 -Basis in Partial Sales",
+            "5 =Adjusted Basis at Sale",
+            " ", # Blank row spacer
+            "CALCULATION OF CAPITAL GAIN ON SALE:",
+            "6 Sale Price",
+            "7 -Cost of Sale",
+            "8 -Adjusted Basis at Sale (Line 5)",
+            "9 -Participation Payment on Sale",
+            "10 =Gain or (Loss)",
+            "11 -Straight Line Cost Recovery (limited to gain)",
+            "12 -Suspended Losses",
+            "13 =Capital Gain from Appreciation",
+            "  ", # Blank row spacer
+            "ITEMS TAXED AS ORDINARY INCOME:",
+            "14 Unamortized Loan Fees/Costs",
+            "15 + [Other]",
+            "16 =Ordinary Taxable Income",
+            "   ", # Blank row spacer
+            "CALCULATION OF SALE PROCEEDS AFTER TAX:",
+            "17 Sale Price",
+            "18 -Cost of Sale",
+            "19 -Participation Payment on Sale",
+            "20 -Mortgage Balance(s)",
+            "21 +Balance of Funded Reserves",
+            "22 =Sale Proceeds Before Tax",
+            f"23 -Tax (Savings) Ordinary Income at {ordinary_tax_rate:.0f}% of line 16",
+            f"24 -Tax Straight Line Recapture at {recapture_tax_rate:.0f}% of line 11",
+            f"25 -Tax on Capital Gains at {cg_tax_rate:.0f}% of line 13",
+            "26 =SALE PROCEEDS AFTER TAX"
         ],
         "Amount": [
+            None, # Header
+            initial_investment,
+            0.0,
+            -total_cost_recovery_taken,
+            0.0,
+            adjusted_basis,
+            None, # Spacer
+            None, # Header
             rounded_sale_price,
-            -cost_of_sale_dollars,  # Negative for display
+            -cost_of_sale_dollars,
+            -adjusted_basis,
+            0.0,
+            gain_on_sale,
+            -recaptured_amount,
+            0.0,
+            cap_gain_appreciation,
+            None, # Spacer
+            None, # Header
+            0.0,
+            0.0,
+            0.0,
+            None, # Spacer
+            None, # Header
+            rounded_sale_price,
+            -cost_of_sale_dollars,
+            0.0,
+            0.0,
+            0.0,
             proceeds_before_tax,
-            -total_tax_on_sale,     # Negative for display
+            0.0,
+            -tax_on_recapture,
+            -tax_on_cap_gain,
             proceeds_after_tax
         ]
     }
     
-    # Convert to DataFrame and set index to hide row numbers
-    df_disp = pd.DataFrame(disposition_data).set_index("Line Item")
+    df_acsw = pd.DataFrame(acsw_data).set_index("Line Item")
     
-    # Render using Streamlit's static table for perfect alignment
-    st.table(df_disp.style.format("${:,.0f}"))
-
-    # --- 6. RETURN METRICS (T-BAR & IRR) ---
-    st.markdown("---")
-    st.markdown("### 📈 Investment Return Metrics")
-    
-    # Construct T-Bars
-    cfbt_stream = [-initial_investment]
-    cfat_stream = [-initial_investment]
-    
-    for year in range(1, int(hold_period) + 1):
-        if year == int(hold_period):
-            cfbt_stream.append(row_cfbt[f"Year {year}"] + proceeds_before_tax)
-            cfat_stream.append(row_cfat[f"Year {year}"] + proceeds_after_tax)
-        else:
-            cfbt_stream.append(row_cfbt[f"Year {year}"])
-            cfat_stream.append(row_cfat[f"Year {year}"])
-
-    def calculate_irr(cfs, max_iterations=1000, tolerance=1e-6):
-        rate = 0.10 
-        for _ in range(max_iterations):
-            npv_calc = sum(cf / ((1 + rate) ** i) for i, cf in enumerate(cfs))
-            derivative = sum(-i * cf / ((1 + rate) ** (i + 1)) for i, cf in enumerate(cfs))
-            if abs(derivative) < 1e-10: return 0.0 
-            new_rate = rate - npv_calc / derivative
-            if abs(new_rate - rate) < tolerance: return new_rate
-            rate = new_rate
-        return rate
+    # Custom formatter to hide 'None' for headers/spacers and format numbers as currency
+    def format_dollars(val):
+        if pd.isna(val):
+            return ""
+        return f"${val:,.0f}"
         
-    irr_bt = calculate_irr(cfbt_stream) * 100
-    irr_at = calculate_irr(cfat_stream) * 100
-    
-    if irr_bt > 0:
-        effective_tax_rate = ((irr_bt - irr_at) / irr_bt) * 100
-    else:
-        effective_tax_rate = 0.0
-
-    c_out1, c_out2, c_out3 = st.columns(3)
-    c_out1.metric("Before-Tax IRR", f"{irr_bt:.2f}%")
-    c_out2.metric("After-Tax IRR", f"{irr_at:.2f}%")
-    c_out3.metric("Effective Tax Rate", f"{effective_tax_rate:.2f}%")
+    st.table(df_acsw.style.format({"Amount": format_dollars}))
