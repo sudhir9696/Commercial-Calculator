@@ -691,3 +691,46 @@ with tab_proforma:
         return f"${val:,.0f}"
         
     st.table(df_acsw.style.format({"Amount": format_dollars}))
+    
+    # --- 6. RETURN METRICS (T-BAR & IRR) ---
+    st.markdown("---")
+    st.markdown("### 📈 Investment Return Metrics")
+    
+    cfbt_stream = [-initial_investment]
+    cfat_stream = [-initial_investment]
+    
+    for year in range(1, int(hold_period) + 1):
+        if year == int(hold_period):
+            cfbt_stream.append(row_cfbt[f"Year {year}"] + proceeds_before_tax)
+            cfat_stream.append(row_cfat[f"Year {year}"] + proceeds_after_tax)
+        else:
+            cfbt_stream.append(row_cfbt[f"Year {year}"])
+            cfat_stream.append(row_cfat[f"Year {year}"])
+
+    def calculate_irr(cfs, max_iterations=1000, tolerance=1e-6):
+        rate = 0.10 
+        for _ in range(max_iterations):
+            npv_calc = sum(cf / ((1 + rate) ** i) for i, cf in enumerate(cfs))
+            derivative = sum(-i * cf / ((1 + rate) ** (i + 1)) for i, cf in enumerate(cfs))
+            if abs(derivative) < 1e-10: return 0.0 
+            new_rate = rate - npv_calc / derivative
+            if abs(new_rate - rate) < tolerance: return new_rate
+            rate = new_rate
+        return rate
+        
+    irr_bt = calculate_irr(cfbt_stream) * 100
+    irr_at = calculate_irr(cfat_stream) * 100
+    
+    # CCIM Fix: Round to 2 decimals BEFORE calculating Effective Tax Rate
+    irr_bt_rounded = round(irr_bt, 2)
+    irr_at_rounded = round(irr_at, 2)
+    
+    if irr_bt_rounded > 0:
+        effective_tax_rate = ((irr_bt_rounded - irr_at_rounded) / irr_bt_rounded) * 100
+    else:
+        effective_tax_rate = 0.0
+
+    c_out1, c_out2, c_out3 = st.columns(3)
+    c_out1.metric("Before-Tax IRR", f"{irr_bt:.2f}%")
+    c_out2.metric("After-Tax IRR", f"{irr_at:.2f}%")
+    c_out3.metric("Effective Tax Rate", f"{effective_tax_rate:.2f}%")
