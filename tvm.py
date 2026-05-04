@@ -464,11 +464,6 @@ with tab_proforma:
     # --- 2. GROWTH ASSUMPTIONS ---
     st.markdown("### 2. Future Growth Assumptions")
     
-    if goi > 0:
-        calculated_expense_ratio = final_opex / goi
-    else:
-        calculated_expense_ratio = 0.0
-
     c_asm1, c_asm2, c_asm3 = st.columns(3)
     with c_asm1:
         st.metric("Year 1 PRI (Linked)", f"${pri:,.0f}")
@@ -477,8 +472,10 @@ with tab_proforma:
         st.metric("Year 1 Other Income (Linked)", f"${other_income:,.0f}")
         other_inc_growth = st.number_input("Other Income Growth (%)", value=0.0, step=0.1)
     with c_asm3:
-        st.metric("Linked OpEx Ratio (% of GOI)", f"{calculated_expense_ratio * 100:.2f}%")
-        hold_period = st.number_input("Anticipated Holding Period (Years)", value=5, min_value=1, max_value=15)
+        st.metric("Year 1 OpEx (Linked)", f"${final_opex:,.0f}")
+        opex_growth = st.number_input("Annual OpEx Growth Rate (%)", value=3.0, step=0.1)
+        
+    hold_period = st.number_input("Anticipated Holding Period (Years)", value=5, min_value=1, max_value=15)
 
     # --- 3. BUILD THE MULTI-YEAR ENGINE ---
     forecast_years = int(hold_period) + 1 
@@ -492,6 +489,7 @@ with tab_proforma:
     
     current_pri = pri
     current_other = other_income
+    current_opex = final_opex # Start with Year 1 OpEx from Tab 4
     annual_ads = 0.0 
     
     basis_of_improvements = initial_investment * (improvements_pct / 100)
@@ -512,7 +510,10 @@ with tab_proforma:
         row_eri[col_name] = current_pri - row_vac[col_name]
         row_other[col_name] = current_other
         row_goi[col_name] = row_eri[col_name] + row_other[col_name]
-        row_opex[col_name] = row_goi[col_name] * calculated_expense_ratio
+        
+        # Calculate Expenses using flat annual growth
+        row_opex[col_name] = current_opex 
+        
         row_noi[col_name] = row_goi[col_name] - row_opex[col_name]
         row_ads[col_name] = annual_ads
         row_cfbt[col_name] = row_noi[col_name] - row_ads[col_name]
@@ -541,6 +542,7 @@ with tab_proforma:
         # Escalations for next year
         current_pri *= (1 + (pri_growth / 100))
         current_other *= (1 + (other_inc_growth / 100))
+        current_opex *= (1 + (opex_growth / 100)) # Grow OpEx by 3% annually
 
     # --- 4. RENDER THE OPERATIONS TABLE ---
     st.markdown("---")
