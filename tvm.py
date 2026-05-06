@@ -1049,31 +1049,28 @@ with tab_Leverage_Pro_forma:
     
     irr_bt = calc_irr(cash_flows_bt) * 100
 
+    # 7. Calculate Cash on Cash Return
+    y1_cfbt = cf_data[0]["CFBT"]
+    cash_on_cash = (y1_cfbt / initial_investment) * 100
+
+    # 8. Calculate Before-Tax Cost of Borrowed Funds
+    def solve_cost_of_funds(n, pv, pmt, fv):
+        r0, r1 = 0.001, 0.01
+        for _ in range(100):
+            f0 = pv * (1 + r0)**n + pmt * (((1 + r0)**n - 1) / r0) + fv
+            f1 = pv * (1 + r1)**n + pmt * (((1 + r1)**n - 1) / r1) + fv
+            if abs(f1 - f0) < 1e-9: break
+            r_new = r1 - f1 * (r1 - r0) / (f1 - f0)
+            if abs(r_new - r1) < 1e-9: return r_new
+            r0, r1 = r1, r_new
+        return r1
+
+    net_loan_proceeds = final_loan - loan_costs_dollars
+    cost_of_funds_mo = solve_cost_of_funds(months_elapsed, net_loan_proceeds, -actual_pmt, -mortgage_balance)
+    cost_of_funds_annual = cost_of_funds_mo * 12 * 100
+
     # --- DISPLAY METRICS ---
     st.markdown("### 📊 Initial Capital Stack")
-    
-    # --- NEW: Visual Loan Sizing Breakdown (Matches Pages 7.6 & 7.7) ---
-    st.markdown("#### ⚖️ Loan Sizing Comparison (LTV vs. DSCR)")
-    c_ls1, c_ls2, c_ls3 = st.columns(3)
-    
-    with c_ls1:
-        st.info(f"**1. LTV Constraint**\n\n"
-                f"Property Value: ${p_price:,.0f}\n\n"
-                f"Max LTV Loan: **${loan_ltv:,.0f}**")
-                
-    with c_ls2:
-        st.warning(f"**2. DSCR Constraint**\n\n"
-                   f"Max ADS: ${max_ads:,.0f}\n\n"
-                   f"Max Periodic PMT: ${max_pmt_monthly:,.2f}\n\n"
-                   f"Max DSCR Loan: **${loan_dscr:,.0f}**")
-                   
-    with c_ls3:
-        st.success(f"**3. Final Funded Loan**\n\n"
-                   f"*(Lower amount, rounded down)*\n\n"
-                   f"Funded Loan: **${final_loan:,.0f}**\n\n"
-                   f"Actual Periodic PMT: **${actual_pmt:,.2f}**")
-    st.markdown("---")
-    
     c_cap1, c_cap2, c_cap3, c_cap4 = st.columns(4)
     c_cap1.metric("Final Funded Loan", f"${final_loan:,.0f}")
     c_cap2.metric("Annual Debt Service", f"${actual_ads:,.0f}")
@@ -1092,4 +1089,13 @@ with tab_Leverage_Pro_forma:
     c_rev3.metric("Less: Mortgage Balance", f"${mortgage_balance:,.0f}")
     c_rev4.metric("Sale Proceeds Before Tax", f"${sale_proceeds_bt:,.0f}")
 
-    st.success(f"### 🎯 Leveraged Before-Tax IRR: {irr_bt:.2f}%")
+    st.markdown("### 🏆 Key Return Metrics")
+    c_ret1, c_ret2, c_ret3 = st.columns(3)
+    c_ret1.metric("Before-Tax Cash on Cash", f"{cash_on_cash:.2f}%")
+    c_ret2.metric("Cost of Borrowed Funds", f"{cost_of_funds_annual:.2f}%")
+    c_ret3.metric("Leveraged Before-Tax IRR", f"{irr_bt:.2f}%")
+    
+    if irr_bt > cost_of_funds_annual:
+        st.success("✅ **Positive Leverage Achieved:** The investment yield is higher than the cost of borrowing.")
+    else:
+        st.error("⚠️ **Negative Leverage Warning:** The cost of borrowing is dragging down your return.")
