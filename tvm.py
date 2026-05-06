@@ -815,7 +815,7 @@ with tab_financing:
         monthly_pmt = amort_pv / n_months
 
     # Display PMT using standard Streamlit formatting for consistency
-    c_amort4.metric("Calculated Monthly PMT", f"${monthly_pmt:,.2f}")
+    c_amort4.metric("Calculated Monthly PMT", f"\${monthly_pmt:,.2f}")
 
     # Build the Schedule
     amort_data = []
