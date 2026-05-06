@@ -10,8 +10,8 @@ st.title("📈 Commercial Real Estate Financial Dashboard")
 st.markdown("---")
 
 # 1. Create the Tabs
-tab_tvm, tab_wealth, tab_concepts, tab_apod, tab_proforma, tab_financing, tab_mod7 = st.tabs([
-    "🔍 Universal TVM", "⚙️ Wealth Accumulation", "💡 Key Concepts", "📊 APOD (Year 1)", "📈 Multi-Year Pro Forma", "🏦 Financing", "🏢 Mod 7: Leveraged Pro Forma"
+tab_tvm, tab_wealth,  tab_apod, tab_proforma, tab_financing, tab_mod7 = st.tabs([
+    "🔍 Universal TVM", "⚙️ Wealth Accumulation", "📊 APOD (Year 1)", "📈 Multi-Year Pro Forma", "🏦 Financing", "🏢 Mod 7: Leveraged Pro Forma"
 ])
 
 # ==========================================
@@ -70,7 +70,7 @@ with tab_tvm:
 # ==========================================
 # TAB 2: DCF, IRR, & WEALTH ACCUMULATION
 # ==========================================
-with tab_dcf:
+with tab_wealth:
     st.header("Comprehensive Wealth Accumulation Model")
     
     st.markdown("### 1. The Triple Rate Inputs")
@@ -259,7 +259,7 @@ with tab_dcf:
 # ==========================================
 # TAB 3: THE CCIM APOD (Deal Screener)
 # ==========================================
-with tab_screener:
+with tab_apod:
     st.header("Annual Property Operating Data (APOD)")
     st.markdown("Comprehensive Before-Tax Cash Flow Analysis")
 
