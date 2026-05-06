@@ -1063,8 +1063,12 @@ with tab_Leverage_Pro_forma:
                     year_interest += int_m
                     mortgage_bal_tracker -= prin_m
                     
-            # Tax Math (Mid-month convention for Year 1 and Year of Sale)
-            depr_y = annual_depr * (11.5 / 12) if (year == 1 or year == p_hold) else annual_depr
+           # CCIM MACRS exact matching (Residential 27.5 yr, Month 1 Acq, Month 12 Disp)
+            if year == 1 or year == p_hold:
+                depr_y = round(improv_value * 0.03485)
+            else:
+                depr_y = round(improv_value * 0.03636)
+            
             total_cost_recovery_taken += depr_y
             
             loan_amort_y = annual_loan_amort if year <= p_loan_term else 0.0
