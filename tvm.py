@@ -794,7 +794,7 @@ with tab_financing:
     st.success(f"### 🏦 Final Recommended Loan Amount: \${final_funded_loan:,.0f}")
     st.caption("*(Based on the lower of the two calculations, rounded down to the nearest $1,000)*")
     
-    # --- STEP 4: AMORTIZATION SCHEDULE ---
+    # --- STEP 4: AMORTIZATION SCHEDULE (SAMPLE PROBLEM 6-9) ---
     st.markdown("---")
     st.markdown("### 📅 Annual Amortization Schedule")
     st.markdown("Calculates the principal and interest allocation based on *Sample Problem 6-9*.")
@@ -814,7 +814,16 @@ with tab_financing:
     else:
         monthly_pmt = amort_pv / n_months
 
-    c_amort4.metric("Calculated Monthly PMT", f"${monthly_pmt:,.2f}")
+    # Custom HTML/Markdown to fix and highlight the PMT font
+    c_amort4.markdown(
+        f"""
+        <div style="text-align: left; padding: 10px; border-radius: 5px; background-color: rgba(255, 75, 75, 0.1);">
+            <p style="font-size: 14px; margin-bottom: 0px; font-weight: 600;">Calculated Monthly PMT</p>
+            <h2 style="color: #FF4B4B; margin-top: 0px; margin-bottom: 0px;">${monthly_pmt:,.2f}</h2>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
 
     # Build the Schedule
     amort_data = []
@@ -837,15 +846,14 @@ with tab_financing:
             annual_principal += principal_payment
             current_balance -= principal_payment
             
-        # Save first 5 years for the table
-        if year <= 5:
-            amort_data.append({
-                "Year": year,
-                "BOY* Balance": boy_balance,
-                "Interest": annual_interest,
-                "Principal": annual_principal,
-                "EOY Balance": current_balance
-            })
+        # Save ALL years for the table to show the full schedule
+        amort_data.append({
+            "Year": year,
+            "BOY Balance": boy_balance,
+            "Interest": annual_interest,
+            "Principal": annual_principal,
+            "EOY Balance": current_balance if current_balance > 0.01 else 0.0
+        })
             
         # Save all years for the chart
         chart_data.append({
@@ -854,16 +862,17 @@ with tab_financing:
             "Principal": annual_principal
         })
 
-    # Render Table
-    st.markdown("#### Partially Completed Amortization Table (First 5 Years)")
+    # Render Table (Full Schedule, Scrollable embedded container)
+    st.markdown("#### Full Amortization Table")
     df_amort = pd.DataFrame(amort_data)
+    
+    # The 'height' parameter makes it scrollable while taking up limited vertical space
     st.dataframe(df_amort.style.format({
-        "BOY* Balance": "${:,.2f}",
+        "BOY Balance": "${:,.2f}",
         "Interest": "${:,.2f}",
         "Principal": "${:,.2f}",
         "EOY Balance": "${:,.2f}"
-    }), hide_index=True, use_container_width=True)
-    st.caption("*Beginning of year")
+    }), height=400, hide_index=True, use_container_width=True)
 
     # Render Chart (Figure 6.6)
     st.markdown("#### Figure 6.6: Allocation of ADS")
