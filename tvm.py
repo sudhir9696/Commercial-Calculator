@@ -947,7 +947,7 @@ with tab_financing:
     st.info(f"**After-Tax Effective Cost of Funds:** {after_tax_yield:.2f}%")
     
 # ==========================================
-# TAB 7: MODULE 7 - LEVERAGED PRO FORMA (AFTER-TAX)
+# TAB 7: MODULE 7 - LEVERAGED PRO FORMA (AFTER-TAX MASTER)
 # ==========================================
 with tab_Leverage_Pro_forma:
     st.header("🏢 Leveraged Investment Analysis")
@@ -994,9 +994,13 @@ with tab_Leverage_Pro_forma:
     st.markdown("---")
 
     # --- ENGINE CALCULATIONS ---
+    import math
+    import pandas as pd
+
     # 1. Base Year NOI
     y1_egi = (p_pri * (1 - (p_vac / 100))) + p_other_inc
     y1_noi = y1_egi - p_opex
+    opex_pct_of_egi = p_opex / y1_egi # CCIM FIX: Locks OpEx to exactly 40% of EGI
 
     # 2. Loan Sizing
     loan_ltv = p_price * (p_ltv / 100)
@@ -1006,14 +1010,12 @@ with tab_Leverage_Pro_forma:
     n_mo = p_amort * 12
     loan_dscr = max_pmt_monthly * ((1 - (1 + r_mo)**-n_mo) / r_mo) if r_mo > 0 else max_pmt_monthly * n_mo
     
-    import math
     final_loan = math.floor(min(loan_ltv, loan_dscr) / 1000) * 1000
     
     # 3. Debt Service & Initial Investment
     actual_pmt = (final_loan * r_mo) / (1 - (1 + r_mo)**-n_mo) if r_mo > 0 else final_loan / n_mo
     actual_ads = actual_pmt * 12
     loan_costs_dollars = final_loan * (p_loan_costs_pct / 100)
-    
     initial_investment = p_price + p_acq_costs + loan_costs_dollars - final_loan
 
     # 4. Tax Foundations
@@ -1021,7 +1023,7 @@ with tab_Leverage_Pro_forma:
     improv_value = basis * (p_improv_alloc / 100)
     annual_loan_amort = loan_costs_dollars / p_loan_term
 
-    # 5. Cash Flow Loop
+    # 5. Cash Flow Loop (Leveraged and Unleveraged)
     cash_flows_bt = [-initial_investment]
     cash_flows_at = [-initial_investment]
     cf_data = []
@@ -1039,13 +1041,13 @@ with tab_Leverage_Pro_forma:
         other_y = p_other_inc * ((1 + (p_other_growth / 100)) ** (year - 1))
         egi_y = (pri_y - vac_y) + other_y
         
-        opex_pct_of_egi = p_opex / y1_egi
-        opex_y = egi_y * opex_pct_of_egi
+        opex_y = egi_y * opex_pct_of_egi # Exact proportional matching
         noi_y = egi_y - opex_y
         
         if year <= p_hold:
             cfbt_y = noi_y - actual_ads
             
+            # Month-by-month exact interest tracking
             year_interest = 0.0
             for m in range(12):
                 if mortgage_bal_tracker > 0:
@@ -1054,6 +1056,7 @@ with tab_Leverage_Pro_forma:
                     year_interest += int_m
                     mortgage_bal_tracker -= prin_m
                     
+            # CCIM MACRS exact matching
             if year == 1 or year == p_hold:
                 depr_y = round(improv_value * 0.03485)
             else:
@@ -1062,12 +1065,12 @@ with tab_Leverage_Pro_forma:
             total_cost_recovery_taken += depr_y
             loan_amort_y = annual_loan_amort if year <= p_loan_term else 0.0
             
-            # Leveraged Tax
+            # Leveraged Tax Math
             taxable_income = noi_y - year_interest - depr_y - loan_amort_y
             tax_liability = taxable_income * (p_tax_ord / 100)
             cfat_y = cfbt_y - tax_liability
             
-            # Unleveraged Tax
+            # Unleveraged Tax Math
             unlev_taxable = noi_y - depr_y
             unlev_tax_liab = unlev_taxable * (p_tax_ord / 100)
             unlev_cfat_y = noi_y - unlev_tax_liab
@@ -1165,24 +1168,24 @@ with tab_Leverage_Pro_forma:
     cost_of_funds_mo = solve_cost_of_funds(months_elapsed, net_loan_proceeds, -actual_pmt, -mortgage_balance)
     cost_of_funds_annual = cost_of_funds_mo * 12 * 100
 
+
+    # ==========================================
     # --- DISPLAY METRICS ---
+    # ==========================================
     
-    st.markdown("#### ⚖️ Loan Sizing Comparison (LTV vs. DSCR)")
-    c_ls1, c_ls2, c_ls3 = st.columns(3)
-    c_ls1.info(f"**1. LTV Constraint**\n\nProperty Value: ${p_price:,.0f}\n\nMax LTV Loan: **${loan_ltv:,.0f}**")
-    c_ls2.warning(f"**2. DSCR Constraint**\n\nMax ADS: ${max_ads:,.0f}\n\nMax Periodic PMT: ${max_pmt_monthly:,.2f}\n\nMax DSCR Loan: **${loan_dscr:,.0f}**")
-    c_ls3.success(f"**3. Final Funded Loan**\n\n*(Lower amount)*\n\nFunded Loan: **${final_loan:,.0f}**\n\nActual PMT: **${actual_pmt:,.2f}**")
+    st.markdown("### 📊 Task 13: Financing Summary")
+    c_t13_1, c_t13_2, c_t13_3 = st.columns(3)
+    c_t13_1.metric("1. Loan Amount from Lender", f"${final_loan:,.0f}")
+    c_t13_2.metric("2. Monthly Payment for Loan", f"${actual_pmt:,.2f}")
+    c_t13_3.metric("3. Annual Debt Service", f"${actual_ads:,.0f}")
+    
+    c_t13_4, c_t13_5, c_t13_6 = st.columns(3)
+    c_t13_4.metric("4. Amount of Loan Costs", f"${loan_costs_dollars:,.0f}")
+    c_t13_5.metric("5. Year 5 Loan Balance", f"${mortgage_balance:,.0f}")
+    c_t13_6.metric("6. Before-Tax Cost of Funds", f"{cost_of_funds_annual:.2f}%")
     st.markdown("---")
 
-    st.markdown("### 📊 Initial Capital Stack")
-    c_cap1, c_cap2, c_cap3, c_cap4 = st.columns(4)
-    c_cap1.metric("Final Funded Loan", f"${final_loan:,.0f}")
-    c_cap2.metric("Annual Debt Service", f"${actual_ads:,.0f}")
-    c_cap3.metric("Loan Fees/Costs", f"${loan_costs_dollars:,.0f}")
-    c_cap4.metric("Initial Equity Investment", f"${initial_investment:,.0f}")
-
     st.markdown("### 📈 Cash Flow Analysis Worksheet (After-Tax)")
-    import pandas as pd
     df_cf = pd.DataFrame(cf_data).set_index("Year")
     st.dataframe(df_cf.style.format({
         "EGI": "${:,.0f}", "OpEx": "${:,.0f}", "NOI": "${:,.0f}", "ADS": "${:,.0f}", 
@@ -1190,27 +1193,29 @@ with tab_Leverage_Pro_forma:
         "Taxable Inc": "${:,.0f}", "Tax Liability": "${:,.0f}", "CFAT": "${:,.0f}"
     }), use_container_width=True)
 
-    # UPDATED: Expanded Task 18 Breakdown showing the exact Cost Recovery Amount
-    st.markdown("### 🚪 Alternative Cash Sales Worksheet (Task 18 Breakdown)")
-    c_rev1, c_rev2, c_rev3 = st.columns(3)
-    c_rev1.metric("1. Adjusted Basis", f"${adjusted_basis:,.0f}")
-    c_rev1.metric("2. Gain on Sale", f"${total_gain:,.0f}")
-    c_rev2.metric("3. Tax on Cap Gains (Appreciation)", f"${cap_gain_tax:,.0f}")
-    c_rev2.metric("4. Gain Allocated to Cost Recovery", f"${total_cost_recovery_taken:,.0f}")
-    c_rev3.metric("Total Tax Liability on Sale", f"${total_tax_on_sale:,.0f}")
-    c_rev3.metric("5. Sale Proceeds After Tax", f"${sale_proceeds_at:,.0f}")
+    st.markdown("### 🚪 Task 14: Sale Proceeds Before-Tax")
+    c_rev_bt1, c_rev_bt2, c_rev_bt3 = st.columns(3)
+    c_rev_bt1.metric("1. Projected Sale Price", f"${sale_price:,.0f}")
+    c_rev_bt2.metric("2. Cost of the Sale", f"${cost_of_sale_dollars:,.0f}")
+    c_rev_bt3.metric("3. Sale Proceeds Before Tax", f"${sale_proceeds_bt:,.0f}")
+
+    st.markdown("### 🧾 Task 18: Sale Proceeds After-Tax (Breakdown)")
+    c_rev_at1, c_rev_at2, c_rev_at3 = st.columns(3)
+    c_rev_at1.metric("1. Adjusted Basis", f"${adjusted_basis:,.0f}")
+    c_rev_at2.metric("2. Total Gain on Sale", f"${total_gain:,.0f}")
+    c_rev_at3.metric("3. Tax on Cap Gains", f"${cap_gain_tax:,.0f}")
+    
+    c_rev_at4, c_rev_at5, c_rev_at6 = st.columns(3)
+    c_rev_at4.metric("4. Gain Allocated to Cost Recovery", f"${total_cost_recovery_taken:,.0f}")
+    c_rev_at5.metric("Tax on Cost Recovery", f"${recapture_tax:,.0f}")
+    c_rev_at6.metric("5. Sale Proceeds After Tax", f"${sale_proceeds_at:,.0f}")
 
     st.markdown("### 🏆 Key Return Metrics")
     c_ret1, c_ret2, c_ret3, c_ret4 = st.columns(4)
-    c_ret1.metric("Before-Tax Cost of Funds", f"{cost_of_funds_annual:.2f}%")
+    c_ret1.metric("Initial Equity Investment", f"${initial_investment:,.0f}")
     c_ret2.metric("Before-Tax Cash on Cash", f"{cash_on_cash:.2f}%")
     c_ret3.metric("Leveraged Before-Tax IRR", f"{irr_bt:.2f}%")
     c_ret4.metric("Leveraged After-Tax IRR", f"{irr_at:.2f}%")
-    
-    if irr_bt > cost_of_funds_annual:
-        st.success("✅ **Positive Leverage Achieved:** The investment yield is higher than the cost of borrowing.")
-    else:
-        st.error("⚠️ **Negative Leverage Warning:** The cost of borrowing is dragging down your return.")
 
     st.markdown("### ⚖️ Task 20: Impact of Leverage Comparison")
     comp_data = {
