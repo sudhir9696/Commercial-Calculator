@@ -10,12 +10,12 @@ st.title("📈 Commercial Real Estate Financial Dashboard")
 st.markdown("---")
 
 # 1. Create the Tabs
-tab_tvm, tab_dcf, tab_concepts, tab_screener, tab_proforma = st.tabs([
+tab_tvm, tab_dcf, tab_concepts, tab_screener, tab_proforma, tab_financing = st.tabs([
     "🔍 Universal TVM", 
     "⚙️ Wealth Accumulation", 
-    "💡 Key Concepts", 
     "📊 APOD (Year 1)",
-    "📈 Multi-Year Pro Forma"
+    "📈 Multi-Year Pro Forma",
+    "Commercial Financing"
 ])
 
 # ==========================================
@@ -261,13 +261,7 @@ with tab_dcf:
             st.dataframe(pd.DataFrame(cap_data), use_container_width=True)
 
 # ==========================================
-# TAB 3 & 4: FUTURE EXPANSION
-# ==========================================
-with tab_concepts:
-    st.info("Module 3: The Six Functions of the Dollar detailed calculators will go here.")
-    
-# ==========================================
-# TAB 4: THE CCIM APOD (Deal Screener)
+# TAB 3: THE CCIM APOD (Deal Screener)
 # ==========================================
 with tab_screener:
     st.header("Annual Property Operating Data (APOD)")
@@ -434,7 +428,7 @@ with tab_screener:
     st.table(df_apod.set_index("Line Item"))
 
 # ==========================================
-# TAB 5: MULTI-YEAR PRO FORMA & AFTER-TAX MODEL
+# TAB 4: MULTI-YEAR PRO FORMA & AFTER-TAX MODEL
 # ==========================================
 with tab_proforma:
     st.header("Cash Flow Analysis Worksheet (After-Tax)")
@@ -734,3 +728,68 @@ with tab_proforma:
     c_out1.metric("Before-Tax IRR", f"{irr_bt:.2f}%")
     c_out2.metric("After-Tax IRR", f"{irr_at:.2f}%")
     c_out3.metric("Effective Tax Rate", f"{effective_tax_rate:.2f}%")
+    
+# ==========================================
+# TAB: COMMERCIAL FINANCING (LTV, ADS, DSCR)
+# ==========================================
+with tab_financing:
+    st.header("Commercial Financing Analysis 🏦")
+    st.markdown("Evaluate loan viability and lender risk using Loan-to-Value (LTV) and Debt Service Coverage Ratio (DSCR).")
+
+    st.markdown("### 1. Loan Parameters")
+    # Inputs
+    c_fin1, c_fin2, c_fin3 = st.columns(3)
+    with c_fin1:
+        fin_purchase_price = st.number_input("Property Value (Purchase Price)", value=4600000.0, step=50000.0)
+        fin_noi = st.number_input("Year 1 Net Operating Income (NOI)", value=263520.0, step=5000.0)
+    with c_fin2:
+        fin_ltv_target = st.number_input("Target LTV (%)", value=70.0, step=1.0)
+        fin_rate = st.number_input("Interest Rate (%)", value=6.0, step=0.125)
+    with c_fin3:
+        fin_amort_years = st.number_input("Amortization (Years)", value=25, step=1)
+        fin_interest_only = st.checkbox("Interest-Only Loan")
+
+    st.markdown("---")
+
+    # --- Calculations ---
+    # 1. Loan Amount
+    loan_amount = fin_purchase_price * (fin_ltv_target / 100)
+
+    # 2. PMT & ADS Calculation
+    if fin_interest_only:
+        annual_debt_service = loan_amount * (fin_rate / 100)
+        monthly_pmt = annual_debt_service / 12
+    else:
+        r = (fin_rate / 100) / 12
+        n = fin_amort_years * 12
+        if r > 0:
+            monthly_pmt = (loan_amount * r) / (1 - (1 + r)**-n)
+        else:
+            monthly_pmt = loan_amount / n
+        annual_debt_service = monthly_pmt * 12
+
+    # 3. DSCR Calculation
+    if annual_debt_service > 0:
+        dscr = fin_noi / annual_debt_service
+    else:
+        dscr = 0.0
+
+    # DSCR Status Logic
+    if dscr >= 1.25:
+        dscr_status = "✅ Strong (Fundable)"
+    elif dscr >= 1.15:
+        dscr_status = "⚠️ Borderline (High Risk)"
+    else:
+        dscr_status = "❌ Unfundable"
+
+    # --- Display Metrics ---
+    st.markdown("### 📊 Underwriting Metrics")
+    c_met1, c_met2, c_met3, c_met4 = st.columns(4)
+    c_met1.metric("Maximum Loan Amount", f"${loan_amount:,.0f}")
+    c_met2.metric("Monthly Payment", f"${monthly_pmt:,.2f}")
+    c_met3.metric("Annual Debt Service (ADS)", f"${annual_debt_service:,.2f}")
+    c_met4.metric("Debt Service Coverage (DSCR)", f"{dscr:.2f}x", f"{dscr_status}")
+
+    # Lender Insight Summary
+    st.markdown("#### 💡 Lender Insight")
+    st.info(f"At a **{fin_ltv_target}% LTV**, the lender provides **${loan_amount:,.0f}** in debt. The property generates **${fin_noi:,.0f}** in NOI to cover **${annual_debt_service:,.0f}** in required annual debt service. A DSCR of **{dscr:.2f}x** means the property produces {dscr*100:.0f}% of the cash needed to satisfy the mortgage. Lenders typically require a minimum DSCR of 1.20x to 1.25x.")
