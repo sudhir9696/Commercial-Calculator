@@ -870,3 +870,76 @@ with tab_financing:
     st.markdown("#### Figure 6.6: Allocation of ADS")
     df_chart = pd.DataFrame(chart_data).set_index("Year")
     st.area_chart(df_chart[["Interest", "Principal"]])
+    
+    # --- STEP 5: EFFECTIVE COST OF FUNDS (LENDER'S YIELD) ---
+    st.markdown("---")
+    st.markdown("### 💸 Effective Cost of Funds (Lender's Yield)")
+    st.markdown("Calculate the true cost of borrowing when accounting for discount points, third-party costs, and early payoff (Balloon).")
+
+    c_yield1, c_yield2, c_yield3 = st.columns(3)
+    
+    with c_yield1:
+        y_loan_amt = st.number_input("Contract Loan Amount", value=80000.0, step=5000.0)
+        y_rate = st.number_input("Nominal Interest Rate (%)", value=8.0, step=0.1)
+        y_amort = st.number_input("Amortization Period (Years)", value=30, step=1, key="y_amort")
+        
+    with c_yield2:
+        y_term = st.number_input("Actual Loan Term / Payoff (Years)", value=30, step=1)
+        y_points = st.number_input("Discount Points (%)", value=4.0, step=0.5)
+        y_third_party = st.number_input("Third-Party Costs ($)", value=0.0, step=100.0)
+        
+    with c_yield3:
+        y_tax_rate = st.number_input("Borrower Tax Rate (%)", value=37.0, step=1.0)
+
+    # 1. Calculate Standard Payment
+    r_mo = (y_rate / 100) / 12
+    n_amort_mo = y_amort * 12
+    n_term_mo = y_term * 12
+    
+    if r_mo > 0:
+        y_pmt = -(y_loan_amt * r_mo) / (1 - (1 + r_mo)**-n_amort_mo)
+    else:
+        y_pmt = -y_loan_amt / n_amort_mo
+
+    # 2. Calculate Balloon Payment (FV) at the end of the actual term
+    if n_term_mo == n_amort_mo:
+        y_fv = 0.0
+    else:
+        # FV formula: FV = PV*(1+r)^n + PMT*(((1+r)^n - 1)/r)
+        y_fv = -(y_loan_amt * (1 + r_mo)**n_term_mo + y_pmt * (((1 + r_mo)**n_term_mo - 1) / r_mo))
+
+    # 3. Calculate Net Loan Proceeds (Adjusted PV)
+    points_cost = y_loan_amt * (y_points / 100)
+    total_loan_costs = points_cost + y_third_party
+    net_pv = y_loan_amt - total_loan_costs
+
+    # 4. Solve for Effective Yield using the Secant Method
+    def solve_rate_secant(n, pv, pmt, fv):
+        r0, r1 = 0.001, 0.01
+        for _ in range(100):
+            f0 = pv * (1 + r0)**n + pmt * (((1 + r0)**n - 1) / r0) + fv
+            f1 = pv * (1 + r1)**n + pmt * (((1 + r1)**n - 1) / r1) + fv
+            if abs(f1 - f0) < 1e-9: break
+            r_new = r1 - f1 * (r1 - r0) / (f1 - f0)
+            if abs(r_new - r1) < 1e-9: return r_new
+            r0, r1 = r1, r_new
+        return r1
+
+    if net_pv > 0:
+        eff_rate_mo = solve_rate_secant(n_term_mo, net_pv, y_pmt, y_fv)
+        eff_rate_annual = eff_rate_mo * 12 * 100
+        after_tax_yield = eff_rate_annual * (1 - (y_tax_rate / 100))
+    else:
+        eff_rate_annual = 0.0
+        after_tax_yield = 0.0
+
+    # Display the breakdown
+    st.markdown("#### Yield Analysis Waterfall")
+    col_w1, col_w2, col_w3, col_w4 = st.columns(4)
+    col_w1.metric("Contract PMT", f"${-y_pmt:,.2f}")
+    col_w2.metric(f"Balloon (Year {y_term})", f"${-y_fv:,.0f}")
+    col_w3.metric("Net Loan Proceeds", f"${net_pv:,.0f}")
+    col_w4.metric("Total Loan Costs", f"${total_loan_costs:,.0f}")
+
+    st.success(f"### 🎯 Before-Tax Effective Cost of Funds: {eff_rate_annual:.2f}%")
+    st.info(f"**After-Tax Effective Cost of Funds:** {after_tax_yield:.2f}%")
