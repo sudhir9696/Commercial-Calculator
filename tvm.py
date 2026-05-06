@@ -794,10 +794,10 @@ with tab_financing:
     st.success(f"### 🏦 Final Recommended Loan Amount: \${final_funded_loan:,.0f}")
     st.caption("*(Based on the lower of the two calculations, rounded down to the nearest $1,000)*")
     
-    # --- STEP 4: AMORTIZATION SCHEDULE (SAMPLE PROBLEM 6-9) ---
+    # --- STEP 4: FULL AMORTIZATION SCHEDULE ---
     st.markdown("---")
     st.markdown("### 📅 Annual Amortization Schedule")
-    st.markdown("Calculates the principal and interest allocation based on *Sample Problem 6-9*.")
+    st.markdown("Calculates the principal and interest allocation.")
 
     # Dedicated inputs for the Amortization Schedule
     c_amort1, c_amort2, c_amort3, c_amort4 = st.columns(4)
@@ -814,16 +814,8 @@ with tab_financing:
     else:
         monthly_pmt = amort_pv / n_months
 
-    # Custom HTML/Markdown to fix and highlight the PMT font
-    c_amort4.markdown(
-        f"""
-        <div style="text-align: left; padding: 10px; border-radius: 5px; background-color: rgba(255, 75, 75, 0.1);">
-            <p style="font-size: 14px; margin-bottom: 0px; font-weight: 600;">Calculated Monthly PMT</p>
-            <h2 style="color: #FF4B4B; margin-top: 0px; margin-bottom: 0px;">${monthly_pmt:,.2f}</h2>
-        </div>
-        """, 
-        unsafe_allow_html=True
-    )
+    # Display PMT using standard Streamlit formatting for consistency
+    c_amort4.metric("Calculated Monthly PMT", f"${monthly_pmt:,.2f}")
 
     # Build the Schedule
     amort_data = []
