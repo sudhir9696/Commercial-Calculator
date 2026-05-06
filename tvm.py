@@ -10,12 +10,8 @@ st.title("📈 Commercial Real Estate Financial Dashboard")
 st.markdown("---")
 
 # 1. Create the Tabs
-tab_tvm, tab_dcf, tab_screener, tab_proforma, tab_financing = st.tabs([
-    "🔍 Universal TVM", 
-    "⚙️ Wealth Accumulation", 
-    "📊 APOD (Year 1)",
-    "📈 Multi-Year Pro Forma",
-    "🏦 Financing (Loan Sizing)"
+tab_tvm, tab_wealth, tab_concepts, tab_apod, tab_proforma, tab_financing, tab_mod7 = st.tabs([
+    "🔍 Universal TVM", "⚙️ Wealth Accumulation", "💡 Key Concepts", "📊 APOD (Year 1)", "📈 Multi-Year Pro Forma", "🏦 Financing", "🏢 Mod 7: Leveraged Pro Forma"
 ])
 
 # ==========================================
@@ -943,3 +939,128 @@ with tab_financing:
 
     st.success(f"### 🎯 Before-Tax Effective Cost of Funds: {eff_rate_annual:.2f}%")
     st.info(f"**After-Tax Effective Cost of Funds:** {after_tax_yield:.2f}%")
+    
+# ==========================================
+# TAB 7: LEVERAGED PRO FORMA
+# ==========================================
+with tab_mod7:
+    st.header("🏢 Leveraged Investment Analysis")
+    st.markdown("Complete Before-Tax Cash Flow and Disposition engine with integrated loan sizing.")
+
+    st.markdown("### 1. Global Assumptions")
+    c_m1, c_m2, c_m3 = st.columns(3)
+    p_price = c_m1.number_input("Purchase Price", value=3750000.0, step=100000.0)
+    p_acq_costs = c_m1.number_input("Acquisition Costs", value=80000.0, step=5000.0)
+    p_hold = c_m1.number_input("Holding Period (Years)", value=5, step=1)
+    
+    p_pri = c_m2.number_input("Year 1 PRI", value=480000.0, step=10000.0)
+    p_pri_growth = c_m2.number_input("PRI Annual Growth (%)", value=2.5, step=0.5)
+    p_vac = c_m2.number_input("Vacancy & Credit Loss (%)", value=10.0, step=1.0)
+    
+    p_opex = c_m3.number_input("Year 1 OpEx", value=165000.0, step=5000.0)
+    p_opex_growth = c_m3.number_input("OpEx Annual Growth (%)", value=3.0, step=0.5)
+    
+    st.markdown("### 2. Financing & Reversion Assumptions")
+    c_m4, c_m5, c_m6 = st.columns(3)
+    p_ltv = c_m4.number_input("Max LTV (%)", value=75.0, step=1.0)
+    p_dscr = c_m4.number_input("Min DSCR", value=1.2, step=0.05)
+    p_rate = c_m4.number_input("Loan Interest Rate (%)", value=3.5, step=0.25)
+    
+    p_amort = c_m5.number_input("Amortization (Years)", value=20, step=1)
+    p_loan_costs_pct = c_m5.number_input("Loan Costs (% of Loan)", value=2.0, step=0.5)
+    
+    p_term_cap = c_m6.number_input("Terminal Cap Rate (%)", value=7.5, step=0.25)
+    p_cost_of_sale = c_m6.number_input("Cost of Sale (%)", value=3.0, step=0.5)
+
+    st.markdown("---")
+
+    # --- ENGINE CALCULATIONS ---
+    # 1. Base Year NOI
+    y1_egi = p_pri * (1 - (p_vac / 100))
+    y1_noi = y1_egi - p_opex
+
+    # 2. Loan Sizing
+    loan_ltv = p_price * (p_ltv / 100)
+    
+    max_ads = y1_noi / p_dscr
+    max_pmt_monthly = max_ads / 12
+    r_mo = (p_rate / 100) / 12
+    n_mo = p_amort * 12
+    loan_dscr = max_pmt_monthly * ((1 - (1 + r_mo)**-n_mo) / r_mo) if r_mo > 0 else max_pmt_monthly * n_mo
+    
+    import math
+    final_loan = math.floor(min(loan_ltv, loan_dscr) / 1000) * 1000
+    
+    # 3. Debt Service & Initial Investment
+    actual_pmt = (final_loan * r_mo) / (1 - (1 + r_mo)**-n_mo) if r_mo > 0 else final_loan / n_mo
+    actual_ads = actual_pmt * 12
+    loan_costs_dollars = final_loan * (p_loan_costs_pct / 100)
+    
+    initial_investment = p_price + p_acq_costs + loan_costs_dollars - final_loan
+
+    # 4. Cash Flow Loop
+    cash_flows_bt = [-initial_investment]
+    cf_data = []
+    
+    for year in range(1, p_hold + 2): # Run an extra year for the terminal cap rate
+        pri_y = p_pri * ((1 + (p_pri_growth / 100)) ** (year - 1))
+        vac_y = pri_y * (p_vac / 100)
+        egi_y = pri_y - vac_y
+        opex_y = p_opex * ((1 + (p_opex_growth / 100)) ** (year - 1))
+        noi_y = egi_y - opex_y
+        cfbt_y = noi_y - actual_ads
+        
+        if year <= p_hold:
+            cf_data.append({"Year": year, "PRI": pri_y, "Vacancy": vac_y, "EGI": egi_y, "OpEx": opex_y, "NOI": noi_y, "ADS": actual_ads, "CFBT": cfbt_y})
+            cash_flows_bt.append(cfbt_y)
+            
+        if year == p_hold + 1:
+            noi_next_year = noi_y
+
+    # 5. Disposition (Reversion)
+    raw_sale_price = noi_next_year / (p_term_cap / 100)
+    sale_price = round(raw_sale_price / 1000) * 1000 # CCIM textbook rounds to nearest 1000
+    cost_of_sale_dollars = sale_price * (p_cost_of_sale / 100)
+    
+    months_elapsed = p_hold * 12
+    # FV of Loan
+    mortgage_balance = final_loan * (1 + r_mo)**months_elapsed - actual_pmt * (((1 + r_mo)**months_elapsed - 1) / r_mo)
+    
+    sale_proceeds_bt = sale_price - cost_of_sale_dollars - mortgage_balance
+    cash_flows_bt[-1] += sale_proceeds_bt # Add proceeds to final year cash flow
+
+    # 6. Calculate IRR
+    def calc_irr(cfs, guess=0.1):
+        rate = guess
+        for _ in range(1000):
+            npv = sum(cf / ((1 + rate) ** i) for i, cf in enumerate(cfs))
+            deriv = sum(-i * cf / ((1 + rate) ** (i + 1)) for i, cf in enumerate(cfs))
+            if abs(deriv) < 1e-10: break
+            rate_new = rate - npv / deriv
+            if abs(rate_new - rate) < 1e-6: return rate_new
+            rate = rate_new
+        return rate
+    
+    irr_bt = calc_irr(cash_flows_bt) * 100
+
+    # --- DISPLAY METRICS ---
+    st.markdown("### 📊 Initial Capital Stack")
+    c_cap1, c_cap2, c_cap3, c_cap4 = st.columns(4)
+    c_cap1.metric("Final Funded Loan", f"${final_loan:,.0f}")
+    c_cap2.metric("Annual Debt Service", f"${actual_ads:,.0f}")
+    c_cap3.metric("Loan Fees/Costs", f"${loan_costs_dollars:,.0f}")
+    c_cap4.metric("Initial Equity Investment", f"${initial_investment:,.0f}")
+
+    st.markdown("### 📈 Cash Flow Analysis Worksheet (Before Tax)")
+    import pandas as pd
+    df_cf = pd.DataFrame(cf_data).set_index("Year")
+    st.dataframe(df_cf.style.format("${:,.0f}"), use_container_width=True)
+
+    st.markdown("### 🚪 Alternative Cash Sales Worksheet (Before Tax)")
+    c_rev1, c_rev2, c_rev3, c_rev4 = st.columns(4)
+    c_rev1.metric("Projected Sale Price", f"${sale_price:,.0f}")
+    c_rev2.metric("Less: Cost of Sale", f"${cost_of_sale_dollars:,.0f}")
+    c_rev3.metric("Less: Mortgage Balance", f"${mortgage_balance:,.0f}")
+    c_rev4.metric("Sale Proceeds Before Tax", f"${sale_proceeds_bt:,.0f}")
+
+    st.success(f"### 🎯 Leveraged Before-Tax IRR: {irr_bt:.2f}%")
