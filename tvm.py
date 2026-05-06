@@ -783,13 +783,13 @@ with tab_financing:
     col_res1, col_res2 = st.columns(2)
     with col_res1:
         st.info(f"**1. Loan Amount using LTV Ratio**\n\n"
-                f"Value: ${prop_value:,.0f} × LTV: {max_ltv}%\n\n"
-                f"**= ${loan_amount_ltv:,.0f}**")
+                f"Value: \${prop_value:,.0f} × LTV: {max_ltv}%\n\n"
+                f"**= \${loan_amount_ltv:,.0f}**")
                 
     with col_res2:
         st.info(f"**2. Loan Amount using DSCR**\n\n"
-                f"ADS: ${max_ads:,.0f} (PMT: ${max_monthly_pmt:,.2f})\n\n"
-                f"**= ${loan_amount_dscr:,.0f}**")
+                f"ADS: \${max_ads:,.0f} (PMT: \${max_monthly_pmt:,.2f})\n\n"
+                f"**= \${loan_amount_dscr:,.0f}**")
 
-    st.success(f"### 🏦 Final Recommended Loan Amount: ${final_funded_loan:,.0f}")
+    st.success(f"### 🏦 Final Recommended Loan Amount: \${final_funded_loan:,.0f}")
     st.caption("*(Based on the lower of the two calculations, rounded down to the nearest $1,000)*")
