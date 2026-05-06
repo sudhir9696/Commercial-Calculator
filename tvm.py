@@ -452,7 +452,7 @@ with tab_proforma:
     with c_acq3:
         ordinary_tax_rate = st.number_input("Ordinary Income Tax Rate (%)", value=37.0, step=1.0)
         cg_tax_rate = st.number_input("Capital Gains Tax Rate (%)", value=20.0, step=1.0, key="pf_cap_gains_tax")
-        recapture_tax_rate = st.number_input("Recapture Tax Rate (%)", value=25.0, step=1.0)
+        recapture_tax_rate = st.number_input("Recapture Tax Rate (%)", value=25.0, step=1.0, key="pf_recapture_tax")
 
     # Calculate Original Basis & Improvements Basis
     st.info(f"**Original Basis:** ${initial_investment:,.0f} | **Depreciable Improvements:** ${(initial_investment * (improvements_pct / 100)):,.0f}")
