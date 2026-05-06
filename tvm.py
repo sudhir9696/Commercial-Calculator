@@ -1148,9 +1148,9 @@ with tab_Leverage_Pro_forma:
     yield_inc_bt = ((irr_bt - irr_bt_unlev) / irr_bt_unlev) * 100 if irr_bt_unlev > 0 else 0.0
     yield_inc_at = ((irr_at - irr_at_unlev) / irr_at_unlev) * 100 if irr_at_unlev > 0 else 0.0
 
-    # 8. Calculate Cash on Cash Return
+    # 8. Calculate Cash on Cash Return (Bulletproofed against 100% financing)
     y1_cfbt = cf_data[0]["CFBT"]
-    cash_on_cash = (y1_cfbt / initial_investment) * 100
+    cash_on_cash = (y1_cfbt / initial_investment) * 100 if initial_investment > 0 else 0.0
 
     # 9. Calculate Before-Tax Cost of Borrowed Funds
     def solve_cost_of_funds(n, pv, pmt, fv):
