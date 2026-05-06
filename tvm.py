@@ -947,11 +947,11 @@ with tab_financing:
     st.info(f"**After-Tax Effective Cost of Funds:** {after_tax_yield:.2f}%")
     
 # ==========================================
-# TAB 7: MODULE 7 - LEVERAGED PRO FORMA 
+# TAB 7: MODULE 7 - LEVERAGED PRO FORMA (AFTER-TAX)
 # ==========================================
 with tab_Leverage_Pro_forma:
     st.header("🏢 Leveraged Investment Analysis")
-    st.markdown("Complete Before-Tax Cash Flow and Disposition engine with integrated loan sizing.")
+    st.markdown("Complete Before and After-Tax Cash Flow and Disposition engine with integrated loan sizing.")
 
     st.markdown("### 1. Global Assumptions")
     c_m1, c_m2, c_m3 = st.columns(3)
@@ -964,7 +964,7 @@ with tab_Leverage_Pro_forma:
     p_pri_growth = c_m2.number_input("PRI Annual Growth (%)", value=3.0, step=0.5)
     p_vac = c_m2.number_input("Vacancy & Credit Loss (%)", value=6.0, step=1.0)
     
-    # NEW: Other Income inputs
+    # Other Income inputs
     p_other_inc = c_m3.number_input("Year 1 Other Income", value=16200.0, step=1000.0)
     p_other_growth = c_m3.number_input("Other Inc. Growth (%)", value=2.0, step=0.5)
     p_opex = c_m3.number_input("Year 1 OpEx", value=175680.0, step=5000.0)
@@ -977,18 +977,30 @@ with tab_Leverage_Pro_forma:
     p_rate = c_m4.number_input("Loan Interest Rate (%)", value=3.75, step=0.25)
     
     p_amort = c_m5.number_input("Amortization (Years)", value=25, step=1)
+    p_loan_term = c_m5.number_input("Loan Term (Years)", value=5, step=1) # Needed to calculate points write-off
     p_loan_costs_pct = c_m5.number_input("Loan Costs (% of Loan)", value=2.0, step=0.5)
     
     p_term_cap = c_m6.number_input("Terminal Cap Rate (%)", value=6.0, step=0.25)
     p_cost_of_sale = c_m6.number_input("Cost of Sale (%)", value=3.0, step=0.5)
-    # NEW: Sale Price Override
+    # Sale Price Override
     p_sale_override = c_m6.number_input("Override Sale Price ($0 = Auto)", value=5083000.0, step=10000.0)
+
+    # NEW: Tax Assumptions
+    st.markdown("### 3. Tax Assumptions")
+    c_m7, c_m8, c_m9 = st.columns(3)
+    p_improv_alloc = c_m7.number_input("Improvements Allocation (%)", value=70.0, step=1.0)
+    p_recov_period = c_m7.number_input("Recovery Period (Years)", value=27.5, step=0.5)
+    
+    p_tax_ord = c_m8.number_input("Ordinary Tax Rate (%)", value=37.0, step=1.0)
+    p_tax_cap = c_m8.number_input("Capital Gains Tax Rate (%)", value=20.0, step=1.0)
+    
+    p_tax_recap = c_m9.number_input("Recapture Tax Rate (%)", value=25.0, step=1.0)
 
     st.markdown("---")
 
     # --- ENGINE CALCULATIONS ---
     # 1. Base Year NOI
-    # NEW: Added Other Income to EGI
+    # Added Other Income to EGI
     y1_egi = (p_pri * (1 - (p_vac / 100))) + p_other_inc
     y1_noi = y1_egi - p_opex
 
@@ -1011,15 +1023,25 @@ with tab_Leverage_Pro_forma:
     
     initial_investment = p_price + p_acq_costs + loan_costs_dollars - final_loan
 
-    # 4. Cash Flow Loop
+    # NEW: 4. Tax Foundations
+    basis = p_price + p_acq_costs
+    improv_value = basis * (p_improv_alloc / 100)
+    annual_depr = improv_value / p_recov_period
+    annual_loan_amort = loan_costs_dollars / p_loan_term
+
+    # 5. Cash Flow Loop (Now tracks exact monthly interest and After-Tax CF)
     cash_flows_bt = [-initial_investment]
+    cash_flows_at = [-initial_investment]
     cf_data = []
+    
+    mortgage_bal_tracker = final_loan
+    total_cost_recovery_taken = 0.0
     
     for year in range(1, p_hold + 2): 
         pri_y = p_pri * ((1 + (p_pri_growth / 100)) ** (year - 1))
         vac_y = pri_y * (p_vac / 100)
         
-        # NEW: Other Income scaling
+        # Other Income scaling
         other_y = p_other_inc * ((1 + (p_other_growth / 100)) ** (year - 1))
         egi_y = (pri_y - vac_y) + other_y
         
@@ -1028,17 +1050,42 @@ with tab_Leverage_Pro_forma:
         opex_y = egi_y * opex_pct_of_egi
         
         noi_y = egi_y - opex_y
-        cfbt_y = noi_y - actual_ads
         
         if year <= p_hold:
-            cf_data.append({"Year": year, "PRI": pri_y, "Vacancy": vac_y, "Other Inc": other_y, "EGI": egi_y, "OpEx": opex_y, "NOI": noi_y, "ADS": actual_ads, "CFBT": cfbt_y})
+            cfbt_y = noi_y - actual_ads
+            
+            # Calculate exact interest paid this year
+            year_interest = 0.0
+            for m in range(12):
+                if mortgage_bal_tracker > 0:
+                    int_m = mortgage_bal_tracker * r_mo
+                    prin_m = actual_pmt - int_m
+                    year_interest += int_m
+                    mortgage_bal_tracker -= prin_m
+                    
+            # Tax Math (Mid-month convention for Year 1 and Year of Sale)
+            depr_y = annual_depr * (11.5 / 12) if (year == 1 or year == p_hold) else annual_depr
+            total_cost_recovery_taken += depr_y
+            
+            loan_amort_y = annual_loan_amort if year <= p_loan_term else 0.0
+            
+            taxable_income = noi_y - year_interest - depr_y - loan_amort_y
+            tax_liability = taxable_income * (p_tax_ord / 100)
+            cfat_y = cfbt_y - tax_liability
+            
+            cf_data.append({
+                "Year": year, "EGI": egi_y, "OpEx": opex_y, "NOI": noi_y, "ADS": actual_ads, "CFBT": cfbt_y,
+                "Interest": year_interest, "Depreciation": depr_y, "Taxable Inc": taxable_income,
+                "Tax Liability": tax_liability, "CFAT": cfat_y
+            })
             cash_flows_bt.append(cfbt_y)
+            cash_flows_at.append(cfat_y)
             
         if year == p_hold + 1:
             noi_next_year = noi_y
 
-    # 5. Disposition (Reversion)
-    # NEW: Override logic
+    # 6. Disposition (Reversion)
+    # Override logic
     if p_sale_override > 0:
         sale_price = p_sale_override
     else:
@@ -1046,15 +1093,29 @@ with tab_Leverage_Pro_forma:
         sale_price = round(raw_sale_price / 1000) * 1000 
         
     cost_of_sale_dollars = sale_price * (p_cost_of_sale / 100)
-    
     months_elapsed = p_hold * 12
-    # NEW: Added round() for CCIM $1 precision fix
+    # Added round() for CCIM $1 precision fix
     mortgage_balance = round(final_loan * (1 + r_mo)**months_elapsed - actual_pmt * (((1 + r_mo)**months_elapsed - 1) / r_mo))
-    
     sale_proceeds_bt = sale_price - cost_of_sale_dollars - mortgage_balance
-    cash_flows_bt[-1] += sale_proceeds_bt 
+    
+    # NEW: Tax on Sale
+    adjusted_basis = basis - total_cost_recovery_taken
+    total_gain = sale_price - cost_of_sale_dollars - adjusted_basis
+    
+    recapture_tax = total_cost_recovery_taken * (p_tax_recap / 100)
+    cap_gain_appreciation = total_gain - total_cost_recovery_taken
+    cap_gain_tax = cap_gain_appreciation * (p_tax_cap / 100) if cap_gain_appreciation > 0 else 0
+    
+    unamortized_loan_costs = loan_costs_dollars - (annual_loan_amort * p_hold) if p_hold < p_loan_term else 0.0
+    ordinary_tax_savings = unamortized_loan_costs * (p_tax_ord / 100)
+    
+    total_tax_on_sale = recapture_tax + cap_gain_tax - ordinary_tax_savings
+    sale_proceeds_at = sale_proceeds_bt - total_tax_on_sale
 
-    # 6. Calculate IRR
+    cash_flows_bt[-1] += sale_proceeds_bt 
+    cash_flows_at[-1] += sale_proceeds_at
+
+    # 7. Calculate IRR (Both BT and AT)
     def calc_irr(cfs, guess=0.1):
         rate = guess
         for _ in range(1000):
@@ -1067,12 +1128,14 @@ with tab_Leverage_Pro_forma:
         return rate
     
     irr_bt = calc_irr(cash_flows_bt) * 100
+    irr_at = calc_irr(cash_flows_at) * 100
+    effective_tax_rate = ((irr_bt - irr_at) / irr_bt) * 100 if irr_bt > 0 else 0.0
 
-    # 7. Calculate Cash on Cash Return
+    # 8. Calculate Cash on Cash Return
     y1_cfbt = cf_data[0]["CFBT"]
     cash_on_cash = (y1_cfbt / initial_investment) * 100
 
-    # 8. Calculate Before-Tax Cost of Borrowed Funds
+    # 9. Calculate Before-Tax Cost of Borrowed Funds
     def solve_cost_of_funds(n, pv, pmt, fv):
         r0, r1 = 0.001, 0.01
         for _ in range(100):
@@ -1090,7 +1153,7 @@ with tab_Leverage_Pro_forma:
 
     # --- DISPLAY METRICS ---
     
-    # NEW: Visual Loan Sizing Breakdown
+    # Visual Loan Sizing Breakdown
     st.markdown("#### ⚖️ Loan Sizing Comparison (LTV vs. DSCR)")
     c_ls1, c_ls2, c_ls3 = st.columns(3)
     c_ls1.info(f"**1. LTV Constraint**\n\nProperty Value: ${p_price:,.0f}\n\nMax LTV Loan: **${loan_ltv:,.0f}**")
@@ -1105,24 +1168,31 @@ with tab_Leverage_Pro_forma:
     c_cap3.metric("Loan Fees/Costs", f"${loan_costs_dollars:,.0f}")
     c_cap4.metric("Initial Equity Investment", f"${initial_investment:,.0f}")
 
-    st.markdown("### 📈 Cash Flow Analysis Worksheet (Before Tax)")
+    # Display expanded table for After-Tax views
+    st.markdown("### 📈 Cash Flow Analysis Worksheet (After-Tax)")
     import pandas as pd
     df_cf = pd.DataFrame(cf_data).set_index("Year")
-    st.dataframe(df_cf.style.format("${:,.0f}"), use_container_width=True)
+    # Formatting specific columns to avoid visual clutter
+    st.dataframe(df_cf.style.format({
+        "EGI": "${:,.0f}", "OpEx": "${:,.0f}", "NOI": "${:,.0f}", "ADS": "${:,.0f}", 
+        "CFBT": "${:,.0f}", "Interest": "${:,.0f}", "Depreciation": "${:,.0f}", 
+        "Taxable Inc": "${:,.0f}", "Tax Liability": "${:,.0f}", "CFAT": "${:,.0f}"
+    }), use_container_width=True)
 
-    st.markdown("### 🚪 Alternative Cash Sales Worksheet (Before Tax)")
+    st.markdown("### 🚪 Alternative Cash Sales Worksheet")
     c_rev1, c_rev2, c_rev3, c_rev4 = st.columns(4)
     c_rev1.metric("Projected Sale Price", f"${sale_price:,.0f}")
-    c_rev2.metric("Less: Cost of Sale", f"${cost_of_sale_dollars:,.0f}")
-    c_rev3.metric("Less: Mortgage Balance", f"${mortgage_balance:,.0f}")
-    c_rev4.metric("Sale Proceeds Before Tax", f"${sale_proceeds_bt:,.0f}")
+    c_rev2.metric("Sale Proceeds Before Tax", f"${sale_proceeds_bt:,.0f}")
+    c_rev3.metric("Tax Liability on Sale", f"${total_tax_on_sale:,.0f}")
+    c_rev4.metric("Sale Proceeds After Tax", f"${sale_proceeds_at:,.0f}")
 
-    # NEW: Key Return Metrics
+    # Key Return Metrics with After-Tax addition
     st.markdown("### 🏆 Key Return Metrics")
-    c_ret1, c_ret2, c_ret3 = st.columns(3)
+    c_ret1, c_ret2, c_ret3, c_ret4 = st.columns(4)
     c_ret1.metric("Before-Tax Cash on Cash", f"{cash_on_cash:.2f}%")
-    c_ret2.metric("Cost of Borrowed Funds", f"{cost_of_funds_annual:.2f}%")
-    c_ret3.metric("Leveraged Before-Tax IRR", f"{irr_bt:.2f}%")
+    c_ret2.metric("Leveraged Before-Tax IRR", f"{irr_bt:.2f}%")
+    c_ret3.metric("Leveraged After-Tax IRR", f"{irr_at:.2f}%")
+    c_ret4.metric("Effective Tax Rate", f"{effective_tax_rate:.2f}%")
     
     if irr_bt > cost_of_funds_annual:
         st.success("✅ **Positive Leverage Achieved:** The investment yield is higher than the cost of borrowing.")
