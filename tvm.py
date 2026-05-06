@@ -576,7 +576,7 @@ with tab_proforma:
     with c_exit1:
         terminal_cap_rate = st.number_input("Terminal Cap Rate (%)", value=7.5, step=0.25, key="terminal_cap_rate_proforma")
     with c_exit2:
-        cost_of_sale_pct = st.number_input("Cost of Sale (%)", value=3.0, step=0.5)
+        cost_of_sale_pct = st.number_input("Cost of Sale (%)", value=3.0, step=0.5, key="cost_of_sale_proforma")
         
     terminal_noi = row_noi.get(f"Year {forecast_years}", 0.0) 
     
