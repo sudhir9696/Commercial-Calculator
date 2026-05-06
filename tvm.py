@@ -10,7 +10,7 @@ st.title("📈 Commercial Real Estate Financial Dashboard")
 st.markdown("---")
 
 # 1. Create the Tabs
-tab_tvm, tab_dcf, tab_concepts, tab_screener, tab_proforma, tab_financing = st.tabs([
+tab_tvm, tab_dcf, tab_screener, tab_proforma, tab_financing = st.tabs([
     "🔍 Universal TVM", 
     "⚙️ Wealth Accumulation", 
     "📊 APOD (Year 1)",
