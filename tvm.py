@@ -451,7 +451,7 @@ with tab_proforma:
         
     with c_acq3:
         ordinary_tax_rate = st.number_input("Ordinary Income Tax Rate (%)", value=37.0, step=1.0)
-        cg_tax_rate = st.number_input("Capital Gains Tax Rate (%)", value=20.0, step=1.0)
+        cg_tax_rate = st.number_input("Capital Gains Tax Rate (%)", value=20.0, step=1.0, key="pf_cap_gains_tax")
         recapture_tax_rate = st.number_input("Recapture Tax Rate (%)", value=25.0, step=1.0)
 
     # Calculate Original Basis & Improvements Basis
@@ -980,8 +980,8 @@ with tab_Leverage_Pro_forma:
     p_loan_term = c_m5.number_input("Loan Term (Years)", value=5, step=1) # Needed to calculate points write-off
     p_loan_costs_pct = c_m5.number_input("Loan Costs (% of Loan)", value=2.0, step=0.5)
     
-    p_term_cap = c_m6.number_input("Terminal Cap Rate (%)", value=6.0, step=0.25)
-    p_cost_of_sale = c_m6.number_input("Cost of Sale (%)", value=3.0, step=0.5)
+    p_term_cap = c_m6.number_input("Terminal Cap Rate (%)", value=6.0, step=0.25, key="pf_terminal_cap")
+    p_cost_of_sale = c_m6.number_input("Cost of Sale (%)", value=3.0, step=0.5, key="pf_cost_of_sale")
     # Sale Price Override
     p_sale_override = c_m6.number_input("Override Sale Price ($0 = Auto)", value=5083000.0, step=10000.0)
 
