@@ -947,7 +947,7 @@ with tab_financing:
     st.info(f"**After-Tax Effective Cost of Funds:** {after_tax_yield:.2f}%")
     
 # ==========================================
-# TAB 7: MODULE 7 - LEVERAGED PRO FORMA (PLAZA SUITES)
+# TAB 7: MODULE 7 - LEVERAGED PRO FORMA 
 # ==========================================
 with tab_Leverage_Pro_forma:
     st.header("🏢 Leveraged Investment Analysis")
@@ -955,34 +955,41 @@ with tab_Leverage_Pro_forma:
 
     st.markdown("### 1. Global Assumptions")
     c_m1, c_m2, c_m3 = st.columns(3)
-    p_price = c_m1.number_input("Purchase Price", value=3750000.0, step=100000.0)
-    p_acq_costs = c_m1.number_input("Acquisition Costs", value=80000.0, step=5000.0, key="acq_costs_main_calc")
+    p_price = c_m1.number_input("Purchase Price", value=4600000.0, step=100000.0)
+    # Kept your custom widget key here!
+    p_acq_costs = c_m1.number_input("Acquisition Costs", value=120000.0, step=5000.0, key="acq_costs_main_calc")
     p_hold = c_m1.number_input("Holding Period (Years)", value=5, step=1)
     
-    p_pri = c_m2.number_input("Year 1 PRI", value=480000.0, step=10000.0)
-    p_pri_growth = c_m2.number_input("PRI Annual Growth (%)", value=2.5, step=0.5)
-    p_vac = c_m2.number_input("Vacancy & Credit Loss (%)", value=10.0, step=1.0)
+    p_pri = c_m2.number_input("Year 1 PRI", value=450000.0, step=10000.0)
+    p_pri_growth = c_m2.number_input("PRI Annual Growth (%)", value=3.0, step=0.5)
+    p_vac = c_m2.number_input("Vacancy & Credit Loss (%)", value=6.0, step=1.0)
     
-    p_opex = c_m3.number_input("Year 1 OpEx", value=165000.0, step=5000.0)
+    # NEW: Other Income inputs
+    p_other_inc = c_m3.number_input("Year 1 Other Income", value=16200.0, step=1000.0)
+    p_other_growth = c_m3.number_input("Other Inc. Growth (%)", value=2.0, step=0.5)
+    p_opex = c_m3.number_input("Year 1 OpEx", value=175680.0, step=5000.0)
     p_opex_growth = c_m3.number_input("OpEx Annual Growth (%)", value=3.0, step=0.5)
     
     st.markdown("### 2. Financing & Reversion Assumptions")
     c_m4, c_m5, c_m6 = st.columns(3)
     p_ltv = c_m4.number_input("Max LTV (%)", value=75.0, step=1.0)
     p_dscr = c_m4.number_input("Min DSCR", value=1.2, step=0.05)
-    p_rate = c_m4.number_input("Loan Interest Rate (%)", value=3.5, step=0.25)
+    p_rate = c_m4.number_input("Loan Interest Rate (%)", value=3.75, step=0.25)
     
-    p_amort = c_m5.number_input("Amortization (Years)", value=20, step=1)
+    p_amort = c_m5.number_input("Amortization (Years)", value=25, step=1)
     p_loan_costs_pct = c_m5.number_input("Loan Costs (% of Loan)", value=2.0, step=0.5)
     
-    p_term_cap = c_m6.number_input("Terminal Cap Rate (%)", value=7.5, step=0.25)
+    p_term_cap = c_m6.number_input("Terminal Cap Rate (%)", value=6.0, step=0.25)
     p_cost_of_sale = c_m6.number_input("Cost of Sale (%)", value=3.0, step=0.5)
+    # NEW: Sale Price Override
+    p_sale_override = c_m6.number_input("Override Sale Price ($0 = Auto)", value=5083000.0, step=10000.0)
 
     st.markdown("---")
 
     # --- ENGINE CALCULATIONS ---
     # 1. Base Year NOI
-    y1_egi = p_pri * (1 - (p_vac / 100))
+    # NEW: Added Other Income to EGI
+    y1_egi = (p_pri * (1 - (p_vac / 100))) + p_other_inc
     y1_noi = y1_egi - p_opex
 
     # 2. Loan Sizing
@@ -1008,32 +1015,41 @@ with tab_Leverage_Pro_forma:
     cash_flows_bt = [-initial_investment]
     cf_data = []
     
-    for year in range(1, p_hold + 2): # Run an extra year for the terminal cap rate
+    for year in range(1, p_hold + 2): 
         pri_y = p_pri * ((1 + (p_pri_growth / 100)) ** (year - 1))
         vac_y = pri_y * (p_vac / 100)
-        egi_y = pri_y - vac_y
+        
+        # NEW: Other Income scaling
+        other_y = p_other_inc * ((1 + (p_other_growth / 100)) ** (year - 1))
+        egi_y = (pri_y - vac_y) + other_y
+        
         opex_y = p_opex * ((1 + (p_opex_growth / 100)) ** (year - 1))
         noi_y = egi_y - opex_y
         cfbt_y = noi_y - actual_ads
         
         if year <= p_hold:
-            cf_data.append({"Year": year, "PRI": pri_y, "Vacancy": vac_y, "EGI": egi_y, "OpEx": opex_y, "NOI": noi_y, "ADS": actual_ads, "CFBT": cfbt_y})
+            cf_data.append({"Year": year, "PRI": pri_y, "Vacancy": vac_y, "Other Inc": other_y, "EGI": egi_y, "OpEx": opex_y, "NOI": noi_y, "ADS": actual_ads, "CFBT": cfbt_y})
             cash_flows_bt.append(cfbt_y)
             
         if year == p_hold + 1:
             noi_next_year = noi_y
 
     # 5. Disposition (Reversion)
-    raw_sale_price = noi_next_year / (p_term_cap / 100)
-    sale_price = round(raw_sale_price / 1000) * 1000 # CCIM textbook rounds to nearest 1000
+    # NEW: Override logic
+    if p_sale_override > 0:
+        sale_price = p_sale_override
+    else:
+        raw_sale_price = noi_next_year / (p_term_cap / 100)
+        sale_price = round(raw_sale_price / 1000) * 1000 
+        
     cost_of_sale_dollars = sale_price * (p_cost_of_sale / 100)
     
     months_elapsed = p_hold * 12
-    # FV of Loan
-    mortgage_balance = final_loan * (1 + r_mo)**months_elapsed - actual_pmt * (((1 + r_mo)**months_elapsed - 1) / r_mo)
+    # NEW: Added round() for CCIM $1 precision fix
+    mortgage_balance = round(final_loan * (1 + r_mo)**months_elapsed - actual_pmt * (((1 + r_mo)**months_elapsed - 1) / r_mo))
     
     sale_proceeds_bt = sale_price - cost_of_sale_dollars - mortgage_balance
-    cash_flows_bt[-1] += sale_proceeds_bt # Add proceeds to final year cash flow
+    cash_flows_bt[-1] += sale_proceeds_bt 
 
     # 6. Calculate IRR
     def calc_irr(cfs, guess=0.1):
@@ -1070,6 +1086,15 @@ with tab_Leverage_Pro_forma:
     cost_of_funds_annual = cost_of_funds_mo * 12 * 100
 
     # --- DISPLAY METRICS ---
+    
+    # NEW: Visual Loan Sizing Breakdown
+    st.markdown("#### ⚖️ Loan Sizing Comparison (LTV vs. DSCR)")
+    c_ls1, c_ls2, c_ls3 = st.columns(3)
+    c_ls1.info(f"**1. LTV Constraint**\n\nProperty Value: ${p_price:,.0f}\n\nMax LTV Loan: **${loan_ltv:,.0f}**")
+    c_ls2.warning(f"**2. DSCR Constraint**\n\nMax ADS: ${max_ads:,.0f}\n\nMax Periodic PMT: ${max_pmt_monthly:,.2f}\n\nMax DSCR Loan: **${loan_dscr:,.0f}**")
+    c_ls3.success(f"**3. Final Funded Loan**\n\n*(Lower amount)*\n\nFunded Loan: **${final_loan:,.0f}**\n\nActual PMT: **${actual_pmt:,.2f}**")
+    st.markdown("---")
+
     st.markdown("### 📊 Initial Capital Stack")
     c_cap1, c_cap2, c_cap3, c_cap4 = st.columns(4)
     c_cap1.metric("Final Funded Loan", f"${final_loan:,.0f}")
@@ -1089,6 +1114,7 @@ with tab_Leverage_Pro_forma:
     c_rev3.metric("Less: Mortgage Balance", f"${mortgage_balance:,.0f}")
     c_rev4.metric("Sale Proceeds Before Tax", f"${sale_proceeds_bt:,.0f}")
 
+    # NEW: Key Return Metrics
     st.markdown("### 🏆 Key Return Metrics")
     c_ret1, c_ret2, c_ret3 = st.columns(3)
     c_ret1.metric("Before-Tax Cash on Cash", f"{cash_on_cash:.2f}%")
