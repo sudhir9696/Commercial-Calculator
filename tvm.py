@@ -992,7 +992,7 @@ with tab_Leverage_Pro_forma:
     p_recov_period = c_m7.number_input("Recovery Period (Years)", value=27.5, step=0.5)
     
     p_tax_ord = c_m8.number_input("Ordinary Tax Rate (%)", value=37.0, step=1.0)
-    p_tax_cap = c_m8.number_input("Capital Gains Tax Rate (%)", value=20.0, step=1.0)
+    p_tax_cap = c_m8.number_input("Capital Gains Tax Rate (%)", value=20.0, step=1.0, key="cap_gains_tax_proforma")
     
     p_tax_recap = c_m9.number_input("Recapture Tax Rate (%)", value=25.0, step=1.0)
 
