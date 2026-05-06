@@ -1029,10 +1029,15 @@ with tab_Leverage_Pro_forma:
     annual_depr = improv_value / p_recov_period
     annual_loan_amort = loan_costs_dollars / p_loan_term
 
-    # 5. Cash Flow Loop (Now tracks exact monthly interest and After-Tax CF)
+    # 5. Cash Flow Loop (Now tracks exact monthly interest, After-Tax CF, and Unleveraged Shadow CF)
     cash_flows_bt = [-initial_investment]
     cash_flows_at = [-initial_investment]
     cf_data = []
+    
+    # NEW: Shadow tracking for Unleveraged (Task 20)
+    unlev_initial = basis
+    unlev_cf_bt = [-unlev_initial]
+    unlev_cf_at = [-unlev_initial]
     
     mortgage_bal_tracker = final_loan
     total_cost_recovery_taken = 0.0
@@ -1073,17 +1078,26 @@ with tab_Leverage_Pro_forma:
             
             loan_amort_y = annual_loan_amort if year <= p_loan_term else 0.0
             
+            # Leveraged Tax
             taxable_income = noi_y - year_interest - depr_y - loan_amort_y
             tax_liability = taxable_income * (p_tax_ord / 100)
             cfat_y = cfbt_y - tax_liability
+            
+            # NEW: Unleveraged Tax
+            unlev_taxable = noi_y - depr_y
+            unlev_tax_liab = unlev_taxable * (p_tax_ord / 100)
+            unlev_cfat_y = noi_y - unlev_tax_liab
             
             cf_data.append({
                 "Year": year, "EGI": egi_y, "OpEx": opex_y, "NOI": noi_y, "ADS": actual_ads, "CFBT": cfbt_y,
                 "Interest": year_interest, "Depreciation": depr_y, "Taxable Inc": taxable_income,
                 "Tax Liability": tax_liability, "CFAT": cfat_y
             })
+            
             cash_flows_bt.append(cfbt_y)
             cash_flows_at.append(cfat_y)
+            unlev_cf_bt.append(noi_y)
+            unlev_cf_at.append(unlev_cfat_y)
             
         if year == p_hold + 1:
             noi_next_year = noi_y
@@ -1102,7 +1116,7 @@ with tab_Leverage_Pro_forma:
     mortgage_balance = round(final_loan * (1 + r_mo)**months_elapsed - actual_pmt * (((1 + r_mo)**months_elapsed - 1) / r_mo))
     sale_proceeds_bt = sale_price - cost_of_sale_dollars - mortgage_balance
     
-    # NEW: Tax on Sale
+    # Tax on Leveraged Sale
     adjusted_basis = basis - total_cost_recovery_taken
     total_gain = sale_price - cost_of_sale_dollars - adjusted_basis
     
@@ -1116,10 +1130,17 @@ with tab_Leverage_Pro_forma:
     total_tax_on_sale = recapture_tax + cap_gain_tax - ordinary_tax_savings
     sale_proceeds_at = sale_proceeds_bt - total_tax_on_sale
 
+    # NEW: Tax on Unleveraged Sale
+    unlev_proceeds_bt = sale_price - cost_of_sale_dollars
+    unlev_tax_on_sale = recapture_tax + cap_gain_tax 
+    unlev_proceeds_at = unlev_proceeds_bt - unlev_tax_on_sale
+
     cash_flows_bt[-1] += sale_proceeds_bt 
     cash_flows_at[-1] += sale_proceeds_at
+    unlev_cf_bt[-1] += unlev_proceeds_bt
+    unlev_cf_at[-1] += unlev_proceeds_at
 
-    # 7. Calculate IRR (Both BT and AT)
+    # 7. Calculate IRR (Both BT and AT, Leveraged and Unleveraged)
     def calc_irr(cfs, guess=0.1):
         rate = guess
         for _ in range(1000):
@@ -1134,6 +1155,14 @@ with tab_Leverage_Pro_forma:
     irr_bt = calc_irr(cash_flows_bt) * 100
     irr_at = calc_irr(cash_flows_at) * 100
     effective_tax_rate = ((irr_bt - irr_at) / irr_bt) * 100 if irr_bt > 0 else 0.0
+
+    # NEW: Unleveraged IRRs
+    irr_bt_unlev = calc_irr(unlev_cf_bt) * 100
+    irr_at_unlev = calc_irr(unlev_cf_at) * 100
+    eff_tax_unlev = ((irr_bt_unlev - irr_at_unlev) / irr_bt_unlev) * 100 if irr_bt_unlev > 0 else 0.0
+    
+    yield_inc_bt = ((irr_bt - irr_bt_unlev) / irr_bt_unlev) * 100 if irr_bt_unlev > 0 else 0.0
+    yield_inc_at = ((irr_at - irr_at_unlev) / irr_at_unlev) * 100 if irr_at_unlev > 0 else 0.0
 
     # 8. Calculate Cash on Cash Return
     y1_cfbt = cf_data[0]["CFBT"]
@@ -1183,22 +1212,35 @@ with tab_Leverage_Pro_forma:
         "Taxable Inc": "${:,.0f}", "Tax Liability": "${:,.0f}", "CFAT": "${:,.0f}"
     }), use_container_width=True)
 
-    st.markdown("### 🚪 Alternative Cash Sales Worksheet")
-    c_rev1, c_rev2, c_rev3, c_rev4 = st.columns(4)
-    c_rev1.metric("Projected Sale Price", f"${sale_price:,.0f}")
-    c_rev2.metric("Sale Proceeds Before Tax", f"${sale_proceeds_bt:,.0f}")
-    c_rev3.metric("Tax Liability on Sale", f"${total_tax_on_sale:,.0f}")
-    c_rev4.metric("Sale Proceeds After Tax", f"${sale_proceeds_at:,.0f}")
+    # NEW: Expanded Task 18 Breakdown
+    st.markdown("### 🚪 Alternative Cash Sales Worksheet (Task 18 Breakdown)")
+    c_rev1, c_rev2, c_rev3 = st.columns(3)
+    c_rev1.metric("1. Adjusted Basis", f"${adjusted_basis:,.0f}")
+    c_rev1.metric("2. Total Gain on Sale", f"${total_gain:,.0f}")
+    c_rev2.metric("3. Tax on Cap Gains (Appreciation)", f"${cap_gain_tax:,.0f}")
+    c_rev2.metric("4. Tax on Cost Recovery (Recapture)", f"${recapture_tax:,.0f}")
+    c_rev3.metric("Total Tax Liability on Sale", f"${total_tax_on_sale:,.0f}")
+    c_rev3.metric("5. Sale Proceeds After Tax", f"${sale_proceeds_at:,.0f}")
 
     # Key Return Metrics with After-Tax addition
     st.markdown("### 🏆 Key Return Metrics")
     c_ret1, c_ret2, c_ret3, c_ret4 = st.columns(4)
-    c_ret1.metric("Before-Tax Cash on Cash", f"{cash_on_cash:.2f}%")
-    c_ret2.metric("Leveraged Before-Tax IRR", f"{irr_bt:.2f}%")
-    c_ret3.metric("Leveraged After-Tax IRR", f"{irr_at:.2f}%")
-    c_ret4.metric("Effective Tax Rate", f"{effective_tax_rate:.2f}%")
+    c_ret1.metric("Before-Tax Cost of Funds", f"{cost_of_funds_annual:.2f}%")
+    c_ret2.metric("Before-Tax Cash on Cash", f"{cash_on_cash:.2f}%")
+    c_ret3.metric("Leveraged Before-Tax IRR", f"{irr_bt:.2f}%")
+    c_ret4.metric("Leveraged After-Tax IRR", f"{irr_at:.2f}%")
     
     if irr_bt > cost_of_funds_annual:
         st.success("✅ **Positive Leverage Achieved:** The investment yield is higher than the cost of borrowing.")
     else:
         st.error("⚠️ **Negative Leverage Warning:** The cost of borrowing is dragging down your return.")
+
+    # NEW: Task 20 Impact of Leverage Table
+    st.markdown("### ⚖️ Task 20: Impact of Leverage Comparison")
+    comp_data = {
+        "Metric": ["Before-tax yield", "After-tax yield", "Effective tax rate"],
+        "Unleveraged": [f"{irr_bt_unlev:.2f}%", f"{irr_at_unlev:.2f}%", f"{eff_tax_unlev:.2f}%"],
+        "Leveraged": [f"{irr_bt:.2f}%", f"{irr_at:.2f}%", f"{effective_tax_rate:.2f}%"],
+        "Yield Increase": [f"{yield_inc_bt:.2f}%", f"{yield_inc_at:.2f}%", "—"]
+    }
+    st.table(pd.DataFrame(comp_data).set_index("Metric"))
