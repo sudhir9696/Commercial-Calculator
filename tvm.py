@@ -1023,7 +1023,10 @@ with tab_Leverage_Pro_forma:
         other_y = p_other_inc * ((1 + (p_other_growth / 100)) ** (year - 1))
         egi_y = (pri_y - vac_y) + other_y
         
-        opex_y = p_opex * ((1 + (p_opex_growth / 100)) ** (year - 1))
+        # CCIM Fix: Lock OpEx to a percentage of EGI (e.g., 40%) instead of flat compounding
+        opex_pct_of_egi = p_opex / y1_egi
+        opex_y = egi_y * opex_pct_of_egi
+        
         noi_y = egi_y - opex_y
         cfbt_y = noi_y - actual_ads
         
