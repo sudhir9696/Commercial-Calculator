@@ -274,7 +274,7 @@ with tab_screener:
     col_f1, col_f2, col_f3 = st.columns(3)
     with col_f1:
         purchase_price = st.number_input("Purchase Price", value=0.0, step=50000.0)
-        acq_costs = st.number_input("Acquisition Costs", value=0.0, step=5000.0)
+        acq_costs = st.number_input("Acquisition Costs ", value=0.0, step=5000.0)
     with col_f2:
         loan_amount = st.number_input("Loan Amount (1st Mortgage)", value=0.0, step=50000.0)
         interest_rate = st.number_input("Interest Rate (%)", value=0.0, step=0.1)
@@ -956,7 +956,7 @@ with tab_Leverage_Pro_forma:
     st.markdown("### 1. Global Assumptions")
     c_m1, c_m2, c_m3 = st.columns(3)
     p_price = c_m1.number_input("Purchase Price", value=3750000.0, step=100000.0)
-    p_acq_costs = c_m1.number_input("Acquisition Costs", value=80000.0, step=5000.0)
+    p_acq_costs = c_m1.number_input("Acquisition Costs", value=80000.0, step=5000.0, key="acq_costs_main_calc")
     p_hold = c_m1.number_input("Holding Period (Years)", value=5, step=1)
     
     p_pri = c_m2.number_input("Year 1 PRI", value=480000.0, step=10000.0)
