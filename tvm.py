@@ -793,3 +793,79 @@ with tab_financing:
 
     st.success(f"### 🏦 Final Recommended Loan Amount: \${final_funded_loan:,.0f}")
     st.caption("*(Based on the lower of the two calculations, rounded down to the nearest $1,000)*")
+    
+    # --- STEP 4: AMORTIZATION SCHEDULE ---
+    st.markdown("---")
+    st.markdown("### 📅 Annual Amortization Schedule")
+    st.markdown("Calculates the principal and interest allocation based on *Sample Problem 6-9*.")
+
+    # Dedicated inputs for the Amortization Schedule
+    c_amort1, c_amort2, c_amort3, c_amort4 = st.columns(4)
+    amort_pv = c_amort1.number_input("Loan Amount", value=100000.0, step=10000.0, key="amort_pv")
+    amort_rate = c_amort2.number_input("Annual Interest Rate (%)", value=8.0, step=0.25, key="amort_rate")
+    amort_years = c_amort3.number_input("Amortization Period (Years)", value=25, step=1, key="amort_years")
+    
+    # Calculate exact PMT
+    r_monthly = (amort_rate / 100) / 12
+    n_months = amort_years * 12
+    
+    if r_monthly > 0:
+        monthly_pmt = amort_pv * (r_monthly * (1 + r_monthly)**n_months) / ((1 + r_monthly)**n_months - 1)
+    else:
+        monthly_pmt = amort_pv / n_months
+
+    c_amort4.metric("Calculated Monthly PMT", f"${monthly_pmt:,.2f}")
+
+    # Build the Schedule
+    amort_data = []
+    chart_data = []
+    current_balance = amort_pv
+    
+    for year in range(1, amort_years + 1):
+        boy_balance = current_balance
+        annual_interest = 0.0
+        annual_principal = 0.0
+        
+        # Calculate 12 individual months to get exact annual buckets
+        for month in range(12):
+            if current_balance <= 0:
+                break
+            interest_payment = current_balance * r_monthly
+            principal_payment = monthly_pmt - interest_payment
+            
+            annual_interest += interest_payment
+            annual_principal += principal_payment
+            current_balance -= principal_payment
+            
+        # Save first 5 years for the table
+        if year <= 5:
+            amort_data.append({
+                "Year": year,
+                "BOY* Balance": boy_balance,
+                "Interest": annual_interest,
+                "Principal": annual_principal,
+                "EOY Balance": current_balance
+            })
+            
+        # Save all years for the chart
+        chart_data.append({
+            "Year": year,
+            "Interest": annual_interest,
+            "Principal": annual_principal
+        })
+
+    # Render Table
+    st.markdown("#### Partially Completed Amortization Table (First 5 Years)")
+    df_amort = pd.DataFrame(amort_data)
+    st.dataframe(df_amort.style.format({
+        "BOY* Balance": "${:,.2f}",
+        "Interest": "${:,.2f}",
+        "Principal": "${:,.2f}",
+        "EOY Balance": "${:,.2f}"
+    }), hide_index=True, use_container_width=True)
+    st.caption("*Beginning of year")
+
+    # Render Chart (Figure 6.6)
+    st.markdown("#### Figure 6.6: Allocation of ADS")
+    df_chart = pd.DataFrame(chart_data).set_index("Year")
+    st.area_chart(df_chart[["Interest", "Principal"]])
