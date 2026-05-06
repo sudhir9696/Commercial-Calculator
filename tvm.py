@@ -1051,6 +1051,29 @@ with tab_Leverage_Pro_forma:
 
     # --- DISPLAY METRICS ---
     st.markdown("### 📊 Initial Capital Stack")
+    
+    # --- NEW: Visual Loan Sizing Breakdown (Matches Pages 7.6 & 7.7) ---
+    st.markdown("#### ⚖️ Loan Sizing Comparison (LTV vs. DSCR)")
+    c_ls1, c_ls2, c_ls3 = st.columns(3)
+    
+    with c_ls1:
+        st.info(f"**1. LTV Constraint**\n\n"
+                f"Property Value: ${p_price:,.0f}\n\n"
+                f"Max LTV Loan: **${loan_ltv:,.0f}**")
+                
+    with c_ls2:
+        st.warning(f"**2. DSCR Constraint**\n\n"
+                   f"Max ADS: ${max_ads:,.0f}\n\n"
+                   f"Max Periodic PMT: ${max_pmt_monthly:,.2f}\n\n"
+                   f"Max DSCR Loan: **${loan_dscr:,.0f}**")
+                   
+    with c_ls3:
+        st.success(f"**3. Final Funded Loan**\n\n"
+                   f"*(Lower amount, rounded down)*\n\n"
+                   f"Funded Loan: **${final_loan:,.0f}**\n\n"
+                   f"Actual Periodic PMT: **${actual_pmt:,.2f}**")
+    st.markdown("---")
+    
     c_cap1, c_cap2, c_cap3, c_cap4 = st.columns(4)
     c_cap1.metric("Final Funded Loan", f"${final_loan:,.0f}")
     c_cap2.metric("Annual Debt Service", f"${actual_ads:,.0f}")
