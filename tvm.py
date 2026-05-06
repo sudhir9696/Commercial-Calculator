@@ -1173,7 +1173,7 @@ with tab_Leverage_Pro_forma:
     # --- DISPLAY METRICS ---
     # ==========================================
     
-    st.markdown("### 📊 Task 13: Financing Summary")
+    st.markdown("### 📊 Financing Summary")
     c_t13_1, c_t13_2, c_t13_3 = st.columns(3)
     c_t13_1.metric("1. Loan Amount from Lender", f"${final_loan:,.0f}")
     c_t13_2.metric("2. Monthly Payment for Loan", f"${actual_pmt:,.2f}")
@@ -1193,13 +1193,13 @@ with tab_Leverage_Pro_forma:
         "Taxable Inc": "${:,.0f}", "Tax Liability": "${:,.0f}", "CFAT": "${:,.0f}"
     }), use_container_width=True)
 
-    st.markdown("### 🚪 Task 14: Sale Proceeds Before-Tax")
+    st.markdown("### 🚪 Sale Proceeds Before-Tax")
     c_rev_bt1, c_rev_bt2, c_rev_bt3 = st.columns(3)
     c_rev_bt1.metric("1. Projected Sale Price", f"${sale_price:,.0f}")
     c_rev_bt2.metric("2. Cost of the Sale", f"${cost_of_sale_dollars:,.0f}")
     c_rev_bt3.metric("3. Sale Proceeds Before Tax", f"${sale_proceeds_bt:,.0f}")
 
-    st.markdown("### 🧾 Task 18: Sale Proceeds After-Tax (Breakdown)")
+    st.markdown("### 🧾 Sale Proceeds After-Tax (Breakdown)")
     c_rev_at1, c_rev_at2, c_rev_at3 = st.columns(3)
     c_rev_at1.metric("1. Adjusted Basis", f"${adjusted_basis:,.0f}")
     c_rev_at2.metric("2. Total Gain on Sale", f"${total_gain:,.0f}")
@@ -1217,7 +1217,7 @@ with tab_Leverage_Pro_forma:
     c_ret3.metric("Leveraged Before-Tax IRR", f"{irr_bt:.2f}%")
     c_ret4.metric("Leveraged After-Tax IRR", f"{irr_at:.2f}%")
 
-    st.markdown("### ⚖️ Task 20: Impact of Leverage Comparison")
+    st.markdown("### ⚖️ Impact of Leverage Comparison")
     comp_data = {
         "Metric": ["Before-tax yield", "After-tax yield", "Effective tax rate"],
         "Unleveraged": [f"{irr_bt_unlev:.2f}%", f"{irr_at_unlev:.2f}%", f"{eff_tax_unlev:.2f}%"],
