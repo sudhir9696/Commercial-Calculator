@@ -15,7 +15,7 @@ tab_tvm, tab_dcf, tab_screener, tab_proforma, tab_financing = st.tabs([
     "⚙️ Wealth Accumulation", 
     "📊 APOD (Year 1)",
     "📈 Multi-Year Pro Forma",
-    "Commercial Financing"
+    "🏦 Financing (Loan Sizing)"
 ])
 
 # ==========================================
@@ -730,66 +730,66 @@ with tab_proforma:
     c_out3.metric("Effective Tax Rate", f"{effective_tax_rate:.2f}%")
     
 # ==========================================
-# TAB: COMMERCIAL FINANCING (LTV, ADS, DSCR)
+# TAB 6: FINANCING & LOAN SIZING
 # ==========================================
 with tab_financing:
-    st.header("Commercial Financing Analysis 🏦")
-    st.markdown("Evaluate loan viability and lender risk using Loan-to-Value (LTV) and Debt Service Coverage Ratio (DSCR).")
+    st.header("Commercial Loan Sizing")
+    st.markdown("Calculate the maximum loan amount by comparing LTV and DSCR constraints.")
 
-    st.markdown("### 1. Loan Parameters")
-    # Inputs
-    c_fin1, c_fin2, c_fin3 = st.columns(3)
+    # Inputs based on Activity 6-3
+    c_fin1, c_fin2 = st.columns(2)
     with c_fin1:
-        fin_purchase_price = st.number_input("Property Value (Purchase Price)", value=4600000.0, step=50000.0)
-        fin_noi = st.number_input("Year 1 Net Operating Income (NOI)", value=263520.0, step=5000.0)
+        st.markdown("#### Property & Income Constraints")
+        prop_value = st.number_input("Property Estimate of Value", value=2000000.0, step=50000.0)
+        prop_noi = st.number_input("Stabilized NOI", value=190000.0, step=5000.0)
+        
     with c_fin2:
-        fin_ltv_target = st.number_input("Target LTV (%)", value=70.0, step=1.0)
-        fin_rate = st.number_input("Interest Rate (%)", value=6.0, step=0.125)
-    with c_fin3:
-        fin_amort_years = st.number_input("Amortization (Years)", value=25, step=1)
-        fin_interest_only = st.checkbox("Interest-Only Loan")
+        st.markdown("#### Lender Underwriting Criteria")
+        max_ltv = st.number_input("Maximum LTV Ratio (%)", value=75.0, step=1.0)
+        min_dscr = st.number_input("Minimum DSCR", value=1.20, step=0.05)
+        loan_rate = st.number_input("Interest Rate (%)", value=9.0, step=0.25)
+        amort_years = st.number_input("Amortization Period (Years)", value=25, step=1)
 
     st.markdown("---")
 
-    # --- Calculations ---
-    # 1. Loan Amount
-    loan_amount = fin_purchase_price * (fin_ltv_target / 100)
+    # --- STEP 1: CALCULATE LOAN AMOUNT USING LTV ---
+    loan_amount_ltv = prop_value * (max_ltv / 100)
 
-    # 2. PMT & ADS Calculation
-    if fin_interest_only:
-        annual_debt_service = loan_amount * (fin_rate / 100)
-        monthly_pmt = annual_debt_service / 12
+    # --- STEP 2: CALCULATE LOAN AMOUNT USING DSCR ---
+    # a. Determine ADS
+    max_ads = prop_noi / min_dscr
+    
+    # b. Determine monthly payment
+    max_monthly_pmt = max_ads / 12
+    
+    # c. Construct T-bar & Solve for PV (Loan Amount)
+    monthly_rate = (loan_rate / 100) / 12
+    total_months = amort_years * 12
+    
+    if monthly_rate == 0:
+        loan_amount_dscr = max_monthly_pmt * total_months
     else:
-        r = (fin_rate / 100) / 12
-        n = fin_amort_years * 12
-        if r > 0:
-            monthly_pmt = (loan_amount * r) / (1 - (1 + r)**-n)
-        else:
-            monthly_pmt = loan_amount / n
-        annual_debt_service = monthly_pmt * 12
+        # PV Formula: PV = PMT * ((1 - (1 + r)^-n) / r)
+        loan_amount_dscr = max_monthly_pmt * ((1 - (1 + monthly_rate)**-total_months) / monthly_rate)
 
-    # 3. DSCR Calculation
-    if annual_debt_service > 0:
-        dscr = fin_noi / annual_debt_service
-    else:
-        dscr = 0.0
+    # --- STEP 3: COMPARE AND SELECT THE LOWER AMOUNT ---
+    import math
+    lower_loan_amount = min(loan_amount_ltv, loan_amount_dscr)
+    final_funded_loan = math.floor(lower_loan_amount / 1000) * 1000 # Round down to nearest $1,000
 
-    # DSCR Status Logic
-    if dscr >= 1.25:
-        dscr_status = "✅ Strong (Fundable)"
-    elif dscr >= 1.15:
-        dscr_status = "⚠️ Borderline (High Risk)"
-    else:
-        dscr_status = "❌ Unfundable"
+    # --- DISPLAY RESULTS MATCHING THE WORKBOOK ---
+    st.markdown("### 📊 Loan Sizing Analysis")
+    
+    col_res1, col_res2 = st.columns(2)
+    with col_res1:
+        st.info(f"**1. Loan Amount using LTV Ratio**\n\n"
+                f"Value: ${prop_value:,.0f} × LTV: {max_ltv}%\n\n"
+                f"**= ${loan_amount_ltv:,.0f}**")
+                
+    with col_res2:
+        st.info(f"**2. Loan Amount using DSCR**\n\n"
+                f"ADS: ${max_ads:,.0f} (PMT: ${max_monthly_pmt:,.2f})\n\n"
+                f"**= ${loan_amount_dscr:,.0f}**")
 
-    # --- Display Metrics ---
-    st.markdown("### 📊 Underwriting Metrics")
-    c_met1, c_met2, c_met3, c_met4 = st.columns(4)
-    c_met1.metric("Maximum Loan Amount", f"${loan_amount:,.0f}")
-    c_met2.metric("Monthly Payment", f"${monthly_pmt:,.2f}")
-    c_met3.metric("Annual Debt Service (ADS)", f"${annual_debt_service:,.2f}")
-    c_met4.metric("Debt Service Coverage (DSCR)", f"{dscr:.2f}x", f"{dscr_status}")
-
-    # Lender Insight Summary
-    st.markdown("#### 💡 Lender Insight")
-    st.info(f"At a **{fin_ltv_target}% LTV**, the lender provides **${loan_amount:,.0f}** in debt. The property generates **${fin_noi:,.0f}** in NOI to cover **${annual_debt_service:,.0f}** in required annual debt service. A DSCR of **{dscr:.2f}x** means the property produces {dscr*100:.0f}% of the cash needed to satisfy the mortgage. Lenders typically require a minimum DSCR of 1.20x to 1.25x.")
+    st.success(f"### 🏦 Final Recommended Loan Amount: ${final_funded_loan:,.0f}")
+    st.caption("*(Based on the lower of the two calculations, rounded down to the nearest $1,000)*")
