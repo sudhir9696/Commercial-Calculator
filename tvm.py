@@ -77,190 +77,289 @@ with tab_tvm:
 # TAB 2: DCF, IRR, & WEALTH ACCUMULATION
 # ==========================================
 with tab_dcf:
-    st.header("Comprehensive Wealth Accumulation Model")
+    # st.header("Comprehensive Wealth Accumulation Model")
     
-    st.markdown("### 1. The Triple Rate Inputs")
-    col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-    with col_r1:
-        holding_period = st.number_input("Holding Period (Years)", min_value=1, max_value=20, value=5, step=1)
-    with col_r2:
-        discount_rate = st.number_input("Discount Rate (%)", value=10.0, step=0.5, help="Target Yield / Opportunity Cost")
-    with col_r3:
-        reinvest_rate = st.number_input("Reinvestment Rate (%)", value=6.0, step=0.5, help="Rate for active reinvestment of positive cash flows")
-    with col_r4:
-        safe_rate = st.number_input("Safe Rate (%)", value=4.0, step=0.5, help="Risk-free rate used to cover negative cash flows (Finance Rate)")
+    # st.markdown("### 1. The Triple Rate Inputs")
+    # col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+    # with col_r1:
+    #     holding_period = st.number_input("Holding Period (Years)", min_value=1, max_value=20, value=5, step=1)
+    # with col_r2:
+    #     discount_rate = st.number_input("Discount Rate (%)", value=10.0, step=0.5, help="Target Yield / Opportunity Cost")
+    # with col_r3:
+    #     reinvest_rate = st.number_input("Reinvestment Rate (%)", value=6.0, step=0.5, help="Rate for active reinvestment of positive cash flows")
+    # with col_r4:
+    #     safe_rate = st.number_input("Safe Rate (%)", value=4.0, step=0.5, help="Risk-free rate used to cover negative cash flows (Finance Rate)")
 
-    st.markdown("### 2. Cash Flow Inputs")
-    initial_investment = st.number_input("Year 0 (Initial Equity - Outflow)", value=-1000000.0, step=10000.0)
+    # st.markdown("### 2. Cash Flow Inputs")
+    # initial_investment = st.number_input("Year 0 (Initial Equity - Outflow)", value=-1000000.0, step=10000.0)
 
-    st.markdown("#### Operational Cash Flows")
-    operational_cfs = []
-    ops_cols = st.columns(min(holding_period, 5)) 
-    for year in range(1, holding_period + 1):
-        col_idx = (year - 1) % 5
-        with ops_cols[col_idx]:
-            val = st.number_input(f"Year {year} CF", value=80000.0 + (year * 5000), step=1000.0, key=f"v_cf_{year}")
-            operational_cfs.append(val)
+    # st.markdown("#### Operational Cash Flows")
+    # operational_cfs = []
+    # ops_cols = st.columns(min(holding_period, 5)) 
+    # for year in range(1, holding_period + 1):
+    #     col_idx = (year - 1) % 5
+    #     with ops_cols[col_idx]:
+    #         val = st.number_input(f"Year {year} CF", value=80000.0 + (year * 5000), step=1000.0, key=f"v_cf_{year}")
+    #         operational_cfs.append(val)
 
-    st.markdown("#### Disposition")
-    sale_proceeds = st.number_input(f"Sale Proceeds (End of Yr {holding_period})", value=1300000.0, step=10000.0)
+    # st.markdown("#### Disposition")
+    # sale_proceeds = st.number_input(f"Sale Proceeds (End of Yr {holding_period})", value=1300000.0, step=10000.0)
 
-    if st.button("Run Wealth Analysis", type="primary"):
-        # Build Cash Flow Array
-        cash_flows = [initial_investment]
-        for i in range(holding_period):
-            if i == holding_period - 1:
-                cash_flows.append(operational_cfs[i] + sale_proceeds)
-            else:
-                cash_flows.append(operational_cfs[i])
+    # if st.button("Run Wealth Analysis", type="primary"):
+    #     # Build Cash Flow Array
+    #     cash_flows = [initial_investment]
+    #     for i in range(holding_period):
+    #         if i == holding_period - 1:
+    #             cash_flows.append(operational_cfs[i] + sale_proceeds)
+    #         else:
+    #             cash_flows.append(operational_cfs[i])
                 
-        # 1. Standard Calculations
-        try:
-            irr = npf.irr(cash_flows) * 100
-        except:
-            irr = 0.0
+    #     # 1. Standard Calculations
+    #     try:
+    #         irr = npf.irr(cash_flows) * 100
+    #     except:
+    #         irr = 0.0
             
-        npv = npf.npv(discount_rate / 100, cash_flows)
+    #     npv = npf.npv(discount_rate / 100, cash_flows)
         
-        # 2. CCIM Capital Accumulation Logic (The Sinking Fund Method)
-        safe_dec = safe_rate / 100
-        reinvest_dec = reinvest_rate / 100
+    #     # 2. CCIM Capital Accumulation Logic (The Sinking Fund Method)
+    #     safe_dec = safe_rate / 100
+    #     reinvest_dec = reinvest_rate / 100
         
-        # Create a copy of cash flows to adjust backwards
-        adjusted_cfs = cash_flows.copy()
+    #     # Create a copy of cash flows to adjust backwards
+    #     adjusted_cfs = cash_flows.copy()
 
-        # Iterate backwards from end of hold to Year 1
-        for t in range(len(adjusted_cfs) - 1, 0, -1):
-            if adjusted_cfs[t] < 0:
-                # Discount the deficit back 1 year at the safe rate
-                cost_in_prev_year = adjusted_cfs[t] / (1 + safe_dec)
-                # Apply it to the previous year's cash flow
-                adjusted_cfs[t-1] += cost_in_prev_year
-                # Zero out the current year since the deficit is now funded
-                adjusted_cfs[t] = 0
+    #     # Iterate backwards from end of hold to Year 1
+    #     for t in range(len(adjusted_cfs) - 1, 0, -1):
+    #         if adjusted_cfs[t] < 0:
+    #             # Discount the deficit back 1 year at the safe rate
+    #             cost_in_prev_year = adjusted_cfs[t] / (1 + safe_dec)
+    #             # Apply it to the previous year's cash flow
+    #             adjusted_cfs[t-1] += cost_in_prev_year
+    #             # Zero out the current year since the deficit is now funded
+    #             adjusted_cfs[t] = 0
 
-        # Now compound the adjusted positive cash flows forward at Reinvest Rate
-        total_accumulated = 0
-        for t in range(1, len(adjusted_cfs)):
-            if adjusted_cfs[t] > 0:
-                total_accumulated += adjusted_cfs[t] * ((1 + reinvest_dec) ** (holding_period - t))
+    #     # Now compound the adjusted positive cash flows forward at Reinvest Rate
+    #     total_accumulated = 0
+    #     for t in range(1, len(adjusted_cfs)):
+    #         if adjusted_cfs[t] > 0:
+    #             total_accumulated += adjusted_cfs[t] * ((1 + reinvest_dec) ** (holding_period - t))
         
-        # 3. Compound Growth Rate (CGR)
-        # Use the adjusted Year 0 equity in case deficits were pushed all the way back to Day 1
-        adjusted_initial_equity = abs(adjusted_cfs[0])
-        try:
-            cgr = ((total_accumulated / adjusted_initial_equity) ** (1 / holding_period) - 1) * 100
-        except:
-            cgr = 0.0
+    #     # 3. Compound Growth Rate (CGR)
+    #     # Use the adjusted Year 0 equity in case deficits were pushed all the way back to Day 1
+    #     adjusted_initial_equity = abs(adjusted_cfs[0])
+    #     try:
+    #         cgr = ((total_accumulated / adjusted_initial_equity) ** (1 / holding_period) - 1) * 100
+    #     except:
+    #         cgr = 0.0
         
-        # 4. Modified Internal Rate of Return (MIRR)
-        # npf.mirr natively handles the exact textbook math for MIRR
-        try:
-            mirr = npf.mirr(cash_flows, safe_rate/100, reinvest_rate/100) * 100
-        except:
-            mirr = 0.0
+    #     # 4. Modified Internal Rate of Return (MIRR)
+    #     # npf.mirr natively handles the exact textbook math for MIRR
+    #     try:
+    #         mirr = npf.mirr(cash_flows, safe_rate/100, reinvest_rate/100) * 100
+    #     except:
+    #         mirr = 0.0
 
-        # Display Results
-        st.markdown("---")
-        res_col1, res_col2 = st.columns(2)
+    #     # Display Results
+    #     st.markdown("---")
+    #     res_col1, res_col2 = st.columns(2)
         
-        with res_col1:
-            st.subheader("Standard Metrics")
-            st.metric("Internal Rate of Return (IRR)", f"{irr:,.2f}%")
-            st.metric("Net Present Value (NPV)", f"${npv:,.2f}")
+    #     with res_col1:
+    #         st.subheader("Standard Metrics")
+    #         st.metric("Internal Rate of Return (IRR)", f"{irr:,.2f}%")
+    #         st.metric("Net Present Value (NPV)", f"${npv:,.2f}")
             
-        with res_col2:
-            st.subheader("Wealth Accumulation")
-            st.metric("Total Capital Accumulated", f"${total_accumulated:,.2f}")
-            st.metric("Modified IRR (MIRR)", f"{mirr:,.2f}%")
-            st.metric("Compound Growth Rate (CGR)", f"{cgr:,.2f}%")
+    #     with res_col2:
+    #         st.subheader("Wealth Accumulation")
+    #         st.metric("Total Capital Accumulated", f"${total_accumulated:,.2f}")
+    #         st.metric("Modified IRR (MIRR)", f"{mirr:,.2f}%")
+    #         st.metric("Compound Growth Rate (CGR)", f"{cgr:,.2f}%")
 
-        # Visualization
-        st.markdown("### Net Cash Flow Timeline")
-        df_plot = pd.DataFrame({
-            "Year": [f"Yr {i}" for i in range(len(cash_flows))], 
-            "Net Cash Flow": cash_flows
-        })
-        st.bar_chart(df_plot.set_index("Year"))
+    #     # Visualization
+    #     st.markdown("### Net Cash Flow Timeline")
+    #     df_plot = pd.DataFrame({
+    #         "Year": [f"Yr {i}" for i in range(len(cash_flows))], 
+    #         "Net Cash Flow": cash_flows
+    #     })
+    #     st.bar_chart(df_plot.set_index("Year"))
         
-        # ==========================================
-        # VISUAL PROOFS (Add this to the bottom of Tab 2)
-        # ==========================================
-        st.markdown("---")
-        st.markdown("### 🧮 Mathematical Proofs")
+    #     # ==========================================
+    #     # VISUAL PROOFS (Add this to the bottom of Tab 2)
+    #     # ==========================================
+    #     st.markdown("---")
+    #     st.markdown("### 🧮 Mathematical Proofs")
         
-        # 1. Proof of MIRR Table
-        with st.expander("Show Proof of MIRR"):
-            st.caption(f"Negative cash flows discounted to Year 0 at Safe Rate ({safe_rate}%). Positive cash flows compounded to Year {holding_period} at Reinvestment Rate ({reinvest_rate}%).")
-            mirr_data = []
-            pv_outflows_total = 0
-            fv_inflows_total = 0
+    #     # 1. Proof of MIRR Table
+    #     with st.expander("Show Proof of MIRR"):
+    #         st.caption(f"Negative cash flows discounted to Year 0 at Safe Rate ({safe_rate}%). Positive cash flows compounded to Year {holding_period} at Reinvestment Rate ({reinvest_rate}%).")
+    #         mirr_data = []
+    #         pv_outflows_total = 0
+    #         fv_inflows_total = 0
             
-            for t, cf in enumerate(cash_flows):
-                if cf < 0:
-                    pv = cf / ((1 + safe_rate/100) ** t)
-                    fv = 0
-                elif cf > 0:
-                    pv = 0
-                    fv = cf * ((1 + reinvest_rate/100) ** (holding_period - t))
-                else:
-                    pv, fv = 0, 0
+    #         for t, cf in enumerate(cash_flows):
+    #             if cf < 0:
+    #                 pv = cf / ((1 + safe_rate/100) ** t)
+    #                 fv = 0
+    #             elif cf > 0:
+    #                 pv = 0
+    #                 fv = cf * ((1 + reinvest_rate/100) ** (holding_period - t))
+    #             else:
+    #                 pv, fv = 0, 0
                 
-                pv_outflows_total += pv
-                fv_inflows_total += fv
+    #             pv_outflows_total += pv
+    #             fv_inflows_total += fv
                 
-                mirr_data.append({
-                    "Year": f"Yr {t}",
-                    "Cash Flow": f"${cf:,.2f}",
-                    "PV of Outflows (Safe Rate)": f"${pv:,.2f}" if pv != 0 else "-",
-                    "FV of Inflows (Reinvest Rate)": f"${fv:,.2f}" if fv != 0 else "-"
-                })
+    #             mirr_data.append({
+    #                 "Year": f"Yr {t}",
+    #                 "Cash Flow": f"${cf:,.2f}",
+    #                 "PV of Outflows (Safe Rate)": f"${pv:,.2f}" if pv != 0 else "-",
+    #                 "FV of Inflows (Reinvest Rate)": f"${fv:,.2f}" if fv != 0 else "-"
+    #             })
             
-            # Add Total Row
-            mirr_data.append({
-                "Year": "TOTALS",
-                "Cash Flow": "-",
-                "PV of Outflows (Safe Rate)": f"${pv_outflows_total:,.2f}",
-                "FV of Inflows (Reinvest Rate)": f"${fv_inflows_total:,.2f}"
-            })
+    #         # Add Total Row
+    #         mirr_data.append({
+    #             "Year": "TOTALS",
+    #             "Cash Flow": "-",
+    #             "PV of Outflows (Safe Rate)": f"${pv_outflows_total:,.2f}",
+    #             "FV of Inflows (Reinvest Rate)": f"${fv_inflows_total:,.2f}"
+    #         })
             
-            st.dataframe(pd.DataFrame(mirr_data), use_container_width=True)
+    #         st.dataframe(pd.DataFrame(mirr_data), use_container_width=True)
 
-        # 2. Proof of Capital Accumulation Table (Sinking Fund)
-        with st.expander("Show Proof of Capital Accumulation (CGR)"):
-            st.caption(f"Future negative cash flows are funded by discounting them back 1 year against previous positive cash flows at the Safe Rate ({safe_rate}%). Remaining positive cash flows are compounded forward at the Reinvestment Rate ({reinvest_rate}%).")
+    #     # 2. Proof of Capital Accumulation Table (Sinking Fund)
+    #     with st.expander("Show Proof of Capital Accumulation (CGR)"):
+    #         st.caption(f"Future negative cash flows are funded by discounting them back 1 year against previous positive cash flows at the Safe Rate ({safe_rate}%). Remaining positive cash flows are compounded forward at the Reinvestment Rate ({reinvest_rate}%).")
             
-            cap_data = []
-            total_fv_adj = 0
+    #         cap_data = []
+    #         total_fv_adj = 0
             
-            for t in range(len(cash_flows)):
-                orig_cf = cash_flows[t]
-                adj_amount = adjusted_cfs[t] - orig_cf if t < len(adjusted_cfs) else 0
-                adj_cf = adjusted_cfs[t]
+    #         for t in range(len(cash_flows)):
+    #             orig_cf = cash_flows[t]
+    #             adj_amount = adjusted_cfs[t] - orig_cf if t < len(adjusted_cfs) else 0
+    #             adj_cf = adjusted_cfs[t]
                 
-                fv_adj = 0
-                if t > 0 and adj_cf > 0:
-                    fv_adj = adj_cf * ((1 + reinvest_rate/100) ** (holding_period - t))
-                    total_fv_adj += fv_adj
+    #             fv_adj = 0
+    #             if t > 0 and adj_cf > 0:
+    #                 fv_adj = adj_cf * ((1 + reinvest_rate/100) ** (holding_period - t))
+    #                 total_fv_adj += fv_adj
                     
-                cap_data.append({
-                    "Year": f"Yr {t}",
-                    "Original CF": f"${orig_cf:,.2f}",
-                    "Sinking Fund Adj": f"${adj_amount:,.2f}" if adj_amount != 0 else "-",
-                    "Adjusted CF": f"${adj_cf:,.2f}",
-                    "FV of Adjusted CF": f"${fv_adj:,.2f}" if fv_adj != 0 else "-"
-                })
+    #             cap_data.append({
+    #                 "Year": f"Yr {t}",
+    #                 "Original CF": f"${orig_cf:,.2f}",
+    #                 "Sinking Fund Adj": f"${adj_amount:,.2f}" if adj_amount != 0 else "-",
+    #                 "Adjusted CF": f"${adj_cf:,.2f}",
+    #                 "FV of Adjusted CF": f"${fv_adj:,.2f}" if fv_adj != 0 else "-"
+    #             })
                 
-            # Add Total Row
-            cap_data.append({
-                "Year": "TOTAL",
-                "Original CF": "-",
-                "Sinking Fund Adj": "-",
-                "Adjusted CF": "-",
-                "FV of Adjusted CF": f"${total_fv_adj:,.2f}"
-            })
+    #         # Add Total Row
+    #         cap_data.append({
+    #             "Year": "TOTAL",
+    #             "Original CF": "-",
+    #             "Sinking Fund Adj": "-",
+    #             "Adjusted CF": "-",
+    #             "FV of Adjusted CF": f"${total_fv_adj:,.2f}"
+    #         })
             
-            st.dataframe(pd.DataFrame(cap_data), use_container_width=True)
+    #         st.dataframe(pd.DataFrame(cap_data), use_container_width=True)
+    
+    st.header("⚙️ Capital Accumulation Comparison")
+    st.markdown("Fixes the flaws of IRR by equalizing initial investments and applying a safe reinvestment rate to all cash flows.")
+
+    c_w1, c_w2 = st.columns(2)
+    p_reinvest = c_w1.number_input("Safe Reinvestment Rate (%)", value=6.0, step=0.5)
+    
+    st.markdown("### Cash Flow Inputs")
+    st.markdown("Enter the End of Year (EOY) cash flows. EOY 0 should be your negative initial investment.")
+    
+    import pandas as pd
+    import numpy as np
+    
+    # Pre-loaded with Sample Problem 8-4 Data
+    default_data = {
+        "Year": [0, 1, 2, 3, 4],
+        "Investment A": [-15000.0, 0.0, 0.0, 0.0, 21961.0],
+        "Investment B": [-10000.0, 1000.0, 1000.0, 1000.0, 12000.0]
+    }
+    df_cf = pd.DataFrame(default_data)
+    
+    # Data Editor so you can change the cash flows easily
+    edited_df = st.data_editor(df_cf, hide_index=True, use_container_width=True)
+    
+    if st.button("Calculate Capital Accumulation", type="primary"):
+        inv_a = edited_df["Investment A"].tolist()
+        inv_b = edited_df["Investment B"].tolist()
+        n = len(inv_a) - 1
+        r = p_reinvest / 100.0
+        
+        # 1. Calculate Standard IRR
+        def calc_irr(cfs):
+            rate = 0.1
+            for _ in range(100):
+                npv = sum(cf / ((1 + rate) ** i) for i, cf in enumerate(cfs))
+                deriv = sum(-i * cf / ((1 + rate) ** (i + 1)) for i, cf in enumerate(cfs))
+                if abs(deriv) < 1e-10: break
+                rate_new = rate - npv / deriv
+                if abs(rate_new - rate) < 1e-6: return rate_new * 100
+                rate = rate_new
+            return rate * 100
+            
+        irr_a = calc_irr(inv_a)
+        irr_b = calc_irr(inv_b)
+        
+        # 2. Step 1: Reinvest positive cash flows
+        accum_a = sum(inv_a[t] * ((1 + r) ** (n - t)) for t in range(1, n + 1))
+        accum_b = sum(inv_b[t] * ((1 + r) ** (n - t)) for t in range(1, n + 1))
+        
+        # 3. Step 2: Size Disparity Adjustment
+        init_a = abs(inv_a[0])
+        init_b = abs(inv_b[0])
+        max_init = max(init_a, init_b)
+        
+        adj_accum_a = accum_a
+        adj_accum_b = accum_b
+        
+        external_inv_a = 0.0
+        external_inv_b = 0.0
+        
+        if init_a < init_b:
+            diff = init_b - init_a
+            external_inv_a = diff * ((1 + r) ** n)
+            adj_accum_a += external_inv_a
+        elif init_b < init_a:
+            diff = init_a - init_b
+            external_inv_b = diff * ((1 + r) ** n)
+            adj_accum_b += external_inv_b
+            
+        # 4. Step 3: Compound Growth Rate (MIRR)
+        cagr_a = ((adj_accum_a / max_init) ** (1 / n)) - 1 if max_init > 0 else 0
+        cagr_b = ((adj_accum_b / max_init) ** (1 / n)) - 1 if max_init > 0 else 0
+        
+        winner = "Investment A" if cagr_a > cagr_b else "Investment B"
+        
+        # --- DISPLAY RESULTS ---
+        st.markdown("---")
+        st.markdown("### 📊 Capital Accumulation Results")
+        
+        c_r1, c_r2 = st.columns(2)
+        with c_r1:
+            st.info(f"#### Investment A")
+            st.metric("Standard Flawed IRR", f"{irr_a:.2f}%")
+            st.metric("Raw Accumulation (Step 1)", f"${accum_a:,.0f}")
+            if external_inv_a > 0:
+                st.caption(f"+ ${external_inv_a:,.0f} from external safe investment")
+            st.metric("Adjusted Total Accumulation", f"${adj_accum_a:,.0f}")
+            st.success(f"**Annual Growth Rate:** {cagr_a * 100:.2f}%")
+            
+        with c_r2:
+            st.info(f"#### Investment B")
+            st.metric("Standard Flawed IRR", f"{irr_b:.2f}%")
+            st.metric("Raw Accumulation (Step 1)", f"${accum_b:,.0f}")
+            if external_inv_b > 0:
+                st.caption(f"+ ${external_inv_b:,.0f} from external safe investment")
+            st.metric("Adjusted Total Accumulation", f"${adj_accum_b:,.0f}")
+            st.success(f"**Annual Growth Rate:** {cagr_b * 100:.2f}%")
+            
+        st.markdown(f"### 🏆 Recommendation: **{winner}** maximizes your wealth.")
 
 # ==========================================
 # TAB 3: THE CCIM APOD (Deal Screener)
