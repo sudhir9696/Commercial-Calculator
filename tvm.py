@@ -268,29 +268,53 @@ with tab_dcf:
     st.markdown("Fixes the flaws of IRR by equalizing initial investments and applying a safe reinvestment rate to all cash flows.")
 
     c_w1, c_w2 = st.columns(2)
-    p_reinvest = c_w1.number_input("Safe Reinvestment Rate (%)", value=6.0, step=0.5)
+    p_reinvest = c_w1.number_input("Safe Reinvestment Rate (%)", value=3.9, step=0.1)
+    p_hold_wealth = c_w2.number_input("Holding Period (Years)", value=5, min_value=1, step=1, key="wealth_hold")
     
-    st.markdown("### Cash Flow Inputs")
-    st.markdown("Enter the End of Year (EOY) cash flows. EOY 0 should be your negative initial investment.")
+    st.markdown("---")
     
+    # 1. INITIAL INVESTMENTS
+    st.markdown("### 1. Initial Investments (Year 0)")
+    i_col1, i_col2 = st.columns(2)
+    init_inv_a = i_col1.number_input("Investment A: Initial Equity", value=-1074240.0, step=10000.0)
+    init_inv_b = i_col2.number_input("Investment B: Initial Equity", value=-1339000.0, step=10000.0)
+
+    # 2. OPERATING CASH FLOWS (DYNAMIC TABLE)
+    st.markdown("### 2. Annual Operating Cash Flows (After-Tax)")
+    st.markdown("Enter the cash flows from operations *only*. Do not include sale proceeds here.")
     import pandas as pd
-    import numpy as np
     
-    # Pre-loaded with Sample Problem 8-4 Data
-    default_data = {
-        "Year": [0, 1, 2, 3, 4],
-        "Investment A": [-15000.0, 0.0, 0.0, 0.0, 21961.0],
-        "Investment B": [-10000.0, 1000.0, 1000.0, 1000.0, 12000.0]
+    # Dynamically generate the table based on the Holding Period
+    default_cf = {
+        "Year": list(range(1, p_hold_wealth + 1)),
+        "Investment A (CFAT)": [0.0] * p_hold_wealth,
+        "Investment B (CFAT)": [0.0] * p_hold_wealth
     }
-    df_cf = pd.DataFrame(default_data)
     
-    # Data Editor so you can change the cash flows easily
+    # Pre-populate with Task 21 Data if the hold is exactly 5 years
+    if p_hold_wealth == 5:
+        default_cf["Investment A (CFAT)"] = [34834.0, 38240.0, 40655.0, 43100.0, 44553.0]
+        default_cf["Investment B (CFAT)"] = [48209.0, 53775.0, 57596.0, 61521.0, 63705.0]
+
+    df_cf = pd.DataFrame(default_cf)
     edited_df = st.data_editor(df_cf, hide_index=True, use_container_width=True)
-    
+
+    # 3. SALE PROCEEDS
+    st.markdown("### 3. End of Holding Period Sale Proceeds (After-Tax)")
+    s_col1, s_col2 = st.columns(2)
+    sale_a = s_col1.number_input(f"Investment A: Sale Proceeds (Applied to Year {p_hold_wealth})", value=1488971.0, step=10000.0)
+    sale_b = s_col2.number_input(f"Investment B: Sale Proceeds (Applied to Year {p_hold_wealth})", value=1749021.0, step=10000.0)
+
     if st.button("Calculate Capital Accumulation", type="primary"):
-        inv_a = edited_df["Investment A"].tolist()
-        inv_b = edited_df["Investment B"].tolist()
-        n = len(inv_a) - 1
+        # Combine the inputs into the final arrays
+        inv_a = [init_inv_a] + edited_df["Investment A (CFAT)"].tolist()
+        inv_b = [init_inv_b] + edited_df["Investment B (CFAT)"].tolist()
+        
+        # Automatically add the Sale Proceeds to the very last year
+        inv_a[-1] += sale_a
+        inv_b[-1] += sale_b
+        
+        n = p_hold_wealth
         r = p_reinvest / 100.0
         
         # 1. Calculate Standard IRR
