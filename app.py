@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import time
 from datetime import datetime
 from typing import Any, Iterable
 
@@ -54,7 +55,8 @@ DEFAULT_ACTOR_ID = "skootle~crexi-commercial-real-estate-scraper"
 DEFAULT_STATE_CODE = "GA"
 DEFAULT_MIN_CAP = 7.0
 DEFAULT_MAX_PRICE = 5_000_000
-DEFAULT_MAX_PROPERTIES = 25
+DEFAULT_MAX_PROPERTIES = 10
+DEFAULT_RUN_TIMEOUT_SECS = 900
 # Skootle's `assetClass` input is a single enum value — pick one per run, or leave None.
 PROPERTY_TYPES = [
     "Multifamily", "Retail", "Industrial", "Office", "Land", "Hospitality", "Mixed-Use",
@@ -232,25 +234,14 @@ def fetch_dataset_items(token: str, dataset_id: str) -> list[dict]:
     return resp.json()
 
 
-def run_actor_sync(
-    token: str,
-    actor_id: str,
+def _build_actor_payload(
     *,
-    search_keywords: list[str] | None = None,
-    start_urls: list[str] | None = None,
-    property_urls: list[str] | None = None,
-    max_items: int = 10,
-    max_search_pages: int = 5,
-    timeout_secs: int = 600,
-) -> list[dict]:
-    """POST to Apify's synchronous run endpoint and return dataset items.
-
-    Schema is skootle/crexi-commercial-real-estate-scraper's actual input
-    (pulled from its build inputSchema, not the marketing docs): one of
-    `searchKeywords`, `startUrls`, or `propertyUrls` is required.
-    Filters like state/price/cap rate happen via the search query, not separate fields.
-    """
-    url = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items"
+    search_keywords: list[str] | None,
+    start_urls: list[str] | None,
+    property_urls: list[str] | None,
+    max_items: int,
+    max_search_pages: int,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "maxItems": int(max_items),
         "maxSearchPages": int(max_search_pages),
@@ -262,7 +253,111 @@ def run_actor_sync(
         payload["startUrls"] = [{"url": u} for u in start_urls]
     if property_urls:
         payload["propertyUrls"] = property_urls
+    return payload
 
+
+def start_actor_run(token: str, actor_id: str, payload: dict[str, Any]) -> str:
+    """Start an Apify actor run asynchronously and return the run id."""
+    url = f"https://api.apify.com/v2/acts/{actor_id}/runs"
+    resp = requests.post(url, params={"token": token}, json=payload, timeout=30)
+    if not resp.ok:
+        raise RuntimeError(_apify_error_message(resp))
+    return resp.json()["data"]["id"]
+
+
+def get_run_status(token: str, run_id: str) -> dict[str, Any]:
+    url = f"https://api.apify.com/v2/actor-runs/{run_id}"
+    resp = requests.get(url, params={"token": token}, timeout=30)
+    if not resp.ok:
+        raise RuntimeError(_apify_error_message(resp))
+    return resp.json()["data"]
+
+
+def abort_actor_run(token: str, run_id: str) -> None:
+    url = f"https://api.apify.com/v2/actor-runs/{run_id}/abort"
+    requests.post(url, params={"token": token}, timeout=15)
+
+
+def fetch_dataset_by_id(token: str, dataset_id: str) -> list[dict]:
+    url = f"https://api.apify.com/v2/datasets/{dataset_id}/items"
+    resp = requests.get(url, params={"token": token, "format": "json"}, timeout=60)
+    if not resp.ok:
+        raise RuntimeError(_apify_error_message(resp))
+    return resp.json()
+
+
+def run_actor_async(
+    token: str,
+    actor_id: str,
+    *,
+    search_keywords: list[str] | None = None,
+    start_urls: list[str] | None = None,
+    property_urls: list[str] | None = None,
+    max_items: int = 10,
+    max_search_pages: int = 5,
+    timeout_secs: int = DEFAULT_RUN_TIMEOUT_SECS,
+    poll_seconds: int = 5,
+    progress_cb=None,
+) -> tuple[list[dict], dict[str, Any]]:
+    """Start an Apify actor run, poll until finished, and return its dataset items.
+
+    Calls `progress_cb(elapsed_s, status, item_count)` after each poll so the
+    Streamlit UI can show live progress instead of a frozen spinner.
+    """
+    payload = _build_actor_payload(
+        search_keywords=search_keywords, start_urls=start_urls, property_urls=property_urls,
+        max_items=max_items, max_search_pages=max_search_pages,
+    )
+    run_id = start_actor_run(token, actor_id, payload)
+    start = time.monotonic()
+    last_run: dict[str, Any] = {"id": run_id, "status": "READY"}
+    while True:
+        last_run = get_run_status(token, run_id)
+        elapsed = int(time.monotonic() - start)
+        item_count = (last_run.get("stats") or {}).get("inputBodyLen", 0)
+        try:
+            ds_id = last_run.get("defaultDatasetId")
+            if ds_id:
+                item_count = (last_run.get("stats") or {}).get("itemCount") or item_count
+        except Exception:
+            pass
+        if progress_cb:
+            progress_cb(elapsed, last_run.get("status", "?"), item_count)
+        if last_run.get("status") in ("SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"):
+            break
+        if elapsed >= timeout_secs:
+            abort_actor_run(token, run_id)
+            raise RuntimeError(f"Apify run exceeded {timeout_secs}s — aborted.")
+        time.sleep(poll_seconds)
+
+    if last_run.get("status") != "SUCCEEDED":
+        msg = last_run.get("statusMessage") or last_run["status"]
+        raise RuntimeError(f"Apify run ended with status {last_run['status']}: {msg}")
+
+    dataset_id = last_run.get("defaultDatasetId")
+    if not dataset_id:
+        return [], last_run
+    return fetch_dataset_by_id(token, dataset_id), last_run
+
+
+# Kept as a thin wrapper for the analyzer's single-property fetch (small / fast).
+def run_actor_sync(
+    token: str, actor_id: str, *,
+    search_keywords: list[str] | None = None,
+    start_urls: list[str] | None = None,
+    property_urls: list[str] | None = None,
+    max_items: int = 10,
+    max_search_pages: int = 5,
+    timeout_secs: int = 600,
+) -> list[dict]:
+    """Synchronous variant — used for fast single-URL fetches from the analyzer.
+    For multi-deal screener runs, use run_actor_async() with progress UI instead.
+    """
+    payload = _build_actor_payload(
+        search_keywords=search_keywords, start_urls=start_urls, property_urls=property_urls,
+        max_items=max_items, max_search_pages=max_search_pages,
+    )
+    url = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items"
     resp = requests.post(
         url,
         params={"token": token, "timeout": timeout_secs, "format": "json"},
@@ -645,11 +740,19 @@ def render_sidebar() -> dict[str, Any]:
             help="Baked into the Crexi search query. Skootle doesn't expose a direct asset-class filter.",
             key="sb_asset_class",
         )
+        city_or_county_in = st.text_input(
+            "City or County (optional)",
+            value="",
+            placeholder="e.g. Atlanta, Cumming, Forsyth County",
+            help="Narrows the Crexi search to a specific GA submarket. Free-text — try the city, "
+                 "or the county name (e.g. 'Forsyth County').",
+            key="sb_city",
+        )
         search_keywords_in = st.text_input(
             "Extra search keywords (optional)",
             value="",
             placeholder="e.g. net lease, value-add, NNN",
-            help="Combined with state + asset class to build the Crexi search query.",
+            help="Combined with state + asset class + city/county to build the Crexi search query.",
             key="sb_keywords",
         )
         max_props = st.slider("Max properties", 5, 200, DEFAULT_MAX_PROPERTIES, 5, key="sb_max_props")
@@ -701,6 +804,7 @@ def render_sidebar() -> dict[str, Any]:
 
     return {
         "asset_class": None if asset_class == "(any)" else asset_class,
+        "city_or_county": city_or_county_in.strip(),
         "extra_keywords": search_keywords_in.strip(),
         "max_props": max_props,
         "run_btn": run_btn,
@@ -832,22 +936,38 @@ def render_command_center(deal: pd.Series, idx: int, sb: dict) -> None:
 
 def render_screener_tab(sb: dict) -> None:
     if sb["run_btn"]:
-        # Build a single search query for Crexi (skootle has no separate state/asset/price filters).
-        query_parts = [sb["asset_class"] or "", sb["extra_keywords"] or "", "georgia"]
+        # Build the Crexi search query (skootle has no separate state/asset/price filters —
+        # everything goes through searchKeywords).
+        query_parts = [
+            sb["asset_class"] or "",
+            sb["city_or_county"] or "",
+            sb["extra_keywords"] or "",
+            "georgia",
+        ]
         query = " ".join(p for p in query_parts if p).strip()
-        with st.spinner(f"Running Crexi scraper on Apify for query: '{query}' (1–3 minutes)…"):
+        with st.status(f"Crexi scrape: '{query}' · max {sb['max_props']}", expanded=True) as status:
             try:
-                rows = run_actor_sync(
+                status.write("Starting actor run on Apify…")
+
+                def _on_progress(elapsed: int, run_status: str, items: int) -> None:
+                    status.update(label=f"{run_status} · {elapsed}s elapsed · {items} items collected")
+
+                rows, run_meta = run_actor_async(
                     APIFY_TOKEN,
                     DEFAULT_ACTOR_ID,
                     search_keywords=[query],
                     max_items=sb["max_props"],
+                    progress_cb=_on_progress,
                 )
                 st.session_state["deals_rows"] = rows
-                st.session_state["data_source"] = f"actor query='{query}' ({len(rows)} items)"
-                st.success(f"Fetched {len(rows)} GA listings from Crexi.")
+                st.session_state["data_source"] = (
+                    f"actor query='{query}' ({len(rows)} items, run {run_meta.get('id','?')})"
+                )
+                status.update(label=f"✅ Fetched {len(rows)} GA listings from Crexi.", state="complete")
             except Exception as exc:
-                st.error(f"Apify run failed: {exc}")
+                status.update(label=f"❌ {exc}", state="error")
+                st.error("Try lowering 'Max properties' to 5, or narrow the query (add a city/county) "
+                         "to reduce scrape time.")
 
     if sb["load_ds_btn"] and sb["ds_id_in"].strip():
         with st.spinner(f"Loading dataset {sb['ds_id_in']}…"):
