@@ -12,6 +12,7 @@ venv/
 
 # Streamlit
 .streamlit/secrets.toml
+.streamlit/cache/
 
 # Claude Code per-user overrides
 .claude/settings.local.json

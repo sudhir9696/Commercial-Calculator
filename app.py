@@ -11,10 +11,12 @@ Two tabs:
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Iterable
 
 import altair as alt
@@ -57,6 +59,7 @@ DEFAULT_MIN_CAP = 7.0
 DEFAULT_MAX_PRICE = 5_000_000
 DEFAULT_MAX_PROPERTIES = 10
 DEFAULT_RUN_TIMEOUT_SECS = 900
+LAST_FETCH_PATH = Path(".streamlit/cache/last_fetch.json")
 # Skootle's `assetClass` input is a single enum value — pick one per run, or leave None.
 PROPERTY_TYPES = [
     "Multifamily", "Retail", "Industrial", "Office", "Land", "Hospitality", "Mixed-Use",
@@ -252,6 +255,38 @@ def fetch_dataset_items(token: str, dataset_id: str) -> list[dict]:
     if not resp.ok:
         raise RuntimeError(_apify_error_message(resp))
     return resp.json()
+
+
+# ---------- Last-fetch persistence (survives session resets within a container) ----------
+
+def save_last_fetch(rows: list[dict], source: str, query: str) -> None:
+    try:
+        LAST_FETCH_PATH.parent.mkdir(parents=True, exist_ok=True)
+        LAST_FETCH_PATH.write_text(json.dumps({
+            "rows": rows,
+            "source": source,
+            "query": query,
+            "ts": datetime.utcnow().isoformat() + "Z",
+        }))
+    except Exception:
+        pass
+
+
+def load_last_fetch() -> dict | None:
+    try:
+        if not LAST_FETCH_PATH.exists():
+            return None
+        return json.loads(LAST_FETCH_PATH.read_text())
+    except Exception:
+        return None
+
+
+def clear_last_fetch() -> None:
+    try:
+        if LAST_FETCH_PATH.exists():
+            LAST_FETCH_PATH.unlink()
+    except Exception:
+        pass
 
 
 def _build_actor_payload(
@@ -1015,6 +1050,7 @@ def render_screener_tab(sb: dict) -> None:
                 st.session_state["data_source"] = (
                     f"actor query='{query}' ({len(rows)} items, run {run_meta.get('id','?')})"
                 )
+                save_last_fetch(rows, st.session_state["data_source"], query)
                 status.update(label=f"✅ Fetched {len(rows)} GA listings from Crexi.", state="complete")
             except Exception as exc:
                 status.update(label=f"❌ {exc}", state="error")
@@ -1032,15 +1068,48 @@ def render_screener_tab(sb: dict) -> None:
                 st.error(f"Dataset load failed: {exc}")
 
     rows = st.session_state.get("deals_rows")
+    using_sample = False
+    disk_loaded = False
+
+    # If session was reset (Cloud rebuild, tab close, etc.) try to recover the
+    # last fetch from disk before falling back to sample data.
+    if not rows:
+        last = load_last_fetch()
+        if last and last.get("rows"):
+            rows = last["rows"]
+            st.session_state["deals_rows"] = rows
+            st.session_state["data_source"] = last.get("source", "disk cache")
+            disk_loaded = True
+            try:
+                age_min = (datetime.utcnow() - datetime.fromisoformat(last["ts"].rstrip("Z"))).total_seconds() / 60
+            except Exception:
+                age_min = None
+
     if not rows:
         rows = SAMPLE_DEALS
-        source_badge = "🟡 Sample data (click 'Fetch live deals' to call Apify)"
-    else:
-        source_badge = f"🟢 Live: {st.session_state['data_source']}"
+        using_sample = True
 
     df = normalize_rows(rows)
     df = flag_action_required(df, sb["min_cap"], sb["max_price_rule"])
-    st.caption(f"Data source: {source_badge}  ·  {len(df)} GA deals loaded")
+
+    if using_sample:
+        st.warning(
+            "**🟡 Showing sample data (4 hard-coded GA deals).** "
+            "The sidebar filters and main-pane filters are working — they just don't have real data to filter yet. "
+            "👉 Set your filters in the sidebar and click **🔄 Fetch live deals from Crexi** to pull live listings.",
+            icon="⚠️",
+        )
+    elif disk_loaded:
+        ago = f"{age_min:.0f} min ago" if age_min is not None else "earlier"
+        c_left, c_right = st.columns([5, 1])
+        c_left.info(f"📂 Restored last fetch from disk cache ({ago}). "
+                    f"Click 🔄 in the sidebar to fetch fresh data.")
+        if c_right.button("Use sample", help="Discard cached data and show sample data instead"):
+            clear_last_fetch()
+            st.session_state["deals_rows"] = None
+            st.rerun()
+    else:
+        st.success(f"🟢 Live data: {st.session_state['data_source']}", icon="✅")
 
     # ----- Top metrics -----
     action_count = int((df["status"] == "🟢 Action Required").sum()) if not df.empty else 0
