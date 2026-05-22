@@ -16,6 +16,7 @@ import re
 from datetime import datetime
 from typing import Any, Iterable
 
+import altair as alt
 import numpy_financial as npf
 import pandas as pd
 import requests
@@ -652,7 +653,8 @@ def render_sidebar() -> dict[str, Any]:
             key="sb_keywords",
         )
         max_props = st.slider("Max properties", 5, 200, DEFAULT_MAX_PROPERTIES, 5, key="sb_max_props")
-        st.caption(f"~Estimated cost: **${max_props * 0.04:,.2f}** at Free tier ($40/1k records).")
+        # Escape $ so Streamlit's markdown doesn't read $1.00 * at Free tier ($40 as LaTeX.
+        st.caption(f"~Estimated cost: **\\${max_props * 0.04:,.2f}** at Free tier (\\$40/1k records).")
 
         run_btn = st.button(
             "🔄 Fetch live deals from Crexi",
@@ -866,12 +868,71 @@ def render_screener_tab(sb: dict) -> None:
 
     df = normalize_rows(rows)
     df = flag_action_required(df, sb["min_cap"], sb["max_price_rule"])
-    st.caption(f"Data source: {source_badge}  ·  {len(df)} GA deals after filter")
+    st.caption(f"Data source: {source_badge}  ·  {len(df)} GA deals loaded")
 
-    st.subheader("All deals")
-    st.dataframe(
-        df,
+    # ----- Top metrics -----
+    action_count = int((df["status"] == "🟢 Action Required").sum()) if not df.empty else 0
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total deals", len(df))
+    m2.metric("🟢 Action Required", action_count)
+    m3.metric("Avg cap rate", f"{df['cap_rate_pct'].mean():.2f}%" if not df.empty and df["cap_rate_pct"].notna().any() else "—")
+    m4.metric("Avg asking price", f"${df['asking_price'].mean():,.0f}" if not df.empty and df["asking_price"].notna().any() else "—")
+
+    # ----- Live filters (apply to the table below) -----
+    with st.container(border=True):
+        st.markdown("**Filters** — apply to the table and chart below in real time")
+        types_available = sorted([t for t in df["property_type"].dropna().unique().tolist() if t])
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            type_filter = st.multiselect(
+                "Asset type", types_available, default=[], key="scr_type_filter",
+                placeholder="(all types)",
+            )
+            status_filter = st.multiselect(
+                "Status", ["🟢 Action Required", "⚪ Review"], default=[], key="scr_status_filter",
+                placeholder="(all statuses)",
+            )
+        with f2:
+            prices = df["asking_price"].dropna()
+            if len(prices) >= 1:
+                p_min, p_max = int(prices.min()), max(int(prices.max()), int(prices.min()) + 1)
+                price_range = st.slider(
+                    "Asking price ($)", p_min, p_max, (p_min, p_max),
+                    step=max((p_max - p_min) // 50, 50_000),
+                    key="scr_price_range",
+                )
+            else:
+                price_range = None
+                st.caption("No price data to filter.")
+        with f3:
+            caps = df["cap_rate_pct"].dropna()
+            if len(caps) >= 1:
+                c_min, c_max = float(caps.min()), max(float(caps.max()), float(caps.min()) + 0.1)
+                cap_range = st.slider(
+                    "Cap rate (%)", c_min, c_max, (c_min, c_max), step=0.1, format="%.2f",
+                    key="scr_cap_range",
+                )
+            else:
+                cap_range = None
+                st.caption("No cap data to filter.")
+
+    fdf = df.copy()
+    if type_filter:
+        fdf = fdf[fdf["property_type"].isin(type_filter)]
+    if status_filter:
+        fdf = fdf[fdf["status"].isin(status_filter)]
+    if price_range:
+        fdf = fdf[fdf["asking_price"].fillna(-1).between(price_range[0], price_range[1])]
+    if cap_range:
+        fdf = fdf[fdf["cap_rate_pct"].fillna(-1).between(cap_range[0], cap_range[1])]
+    fdf = fdf.reset_index(drop=True)
+
+    st.subheader(f"All deals · {len(fdf)} after filter")
+    event = st.dataframe(
+        fdf,
         use_container_width=True, hide_index=True,
+        on_select="rerun", selection_mode="single-row",
+        key="scr_table",
         column_config={
             "asking_price": st.column_config.NumberColumn("Asking Price", format="$%,.0f"),
             "cap_rate_pct": st.column_config.NumberColumn("Cap Rate %", format="%.2f"),
@@ -883,13 +944,82 @@ def render_screener_tab(sb: dict) -> None:
         },
     )
 
-    st.subheader("🟢 Action Required — Due Diligence Command Center")
-    action_df = df[df["status"] == "🟢 Action Required"].reset_index(drop=True)
-    if action_df.empty:
-        st.info("No deals match the current Action-Required rule. Loosen the thresholds in the sidebar.")
-        return
-    for i, deal in action_df.iterrows():
-        render_command_center(deal, i, sb)
+    # ----- Inline deep-dive for the row the user clicked -----
+    selected_rows = getattr(event.selection, "rows", []) if hasattr(event, "selection") else []
+    if selected_rows and not fdf.empty:
+        sel = fdf.iloc[selected_rows[0]]
+        with st.container(border=True):
+            st.subheader(f"🔍 Selected: {sel['address']}")
+            head = st.columns(4)
+            head[0].metric("Asking Price", f"${sel['asking_price']:,.0f}" if pd.notna(sel["asking_price"]) else "—")
+            head[1].metric("Cap Rate", f"{sel['cap_rate_pct']:.2f}%" if pd.notna(sel["cap_rate_pct"]) else "—")
+            head[2].metric("SF", f"{int(sel['square_footage']):,}" if pd.notna(sel["square_footage"]) else "—")
+            head[3].metric(
+                "Price/SF",
+                f"${sel['asking_price']/sel['square_footage']:,.0f}"
+                if pd.notna(sel["asking_price"]) and pd.notna(sel["square_footage"]) and sel["square_footage"] else "—",
+            )
+            link_cols = st.columns(2)
+            if sel.get("listing_url"):
+                link_cols[0].link_button("🔗 Open on Crexi", sel["listing_url"], use_container_width=True)
+            if sel.get("om_url"):
+                link_cols[1].link_button("📄 OM", sel["om_url"], type="primary", use_container_width=True)
+
+            inv = _investment_for_deal(sel.to_dict(), sb)
+            if inv:
+                _render_investment_block(inv)
+                xlsx_bytes = build_ccim_workbook(sel.to_dict(), investment=inv)
+                st.download_button(
+                    "🧮 Generate CCIM Excel Model",
+                    data=xlsx_bytes,
+                    file_name=f"CCIM_Underwriting_{_slugify(str(sel['address']))}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="scr_sel_xlsx",
+                )
+            else:
+                st.info("Need both asking price and cap rate to run the investment projection.")
+    else:
+        st.caption("👆 Click any row in the table to see a deep dive with investment analysis + CCIM Excel.")
+
+    # ----- Scatter chart -----
+    chart_df = fdf.dropna(subset=["asking_price", "cap_rate_pct"]).copy()
+    if len(chart_df) >= 2:
+        with st.expander("📈 Cap rate vs asking price (interactive chart)", expanded=False):
+            chart_df["sf_for_size"] = chart_df["square_footage"].fillna(chart_df["square_footage"].dropna().median() if chart_df["square_footage"].notna().any() else 10000)
+            chart = (
+                alt.Chart(chart_df)
+                .mark_circle(opacity=0.75, stroke="white", strokeWidth=1)
+                .encode(
+                    x=alt.X("asking_price:Q", title="Asking Price ($)", axis=alt.Axis(format="$,.0f")),
+                    y=alt.Y("cap_rate_pct:Q", title="Cap Rate (%)", scale=alt.Scale(zero=False)),
+                    color=alt.Color("status:N", legend=alt.Legend(title="Status")),
+                    size=alt.Size("sf_for_size:Q", title="SF", scale=alt.Scale(range=[80, 600]), legend=None),
+                    tooltip=[
+                        alt.Tooltip("address:N", title="Address"),
+                        alt.Tooltip("property_type:N", title="Type"),
+                        alt.Tooltip("asking_price:Q", title="Price", format="$,.0f"),
+                        alt.Tooltip("cap_rate_pct:Q", title="Cap %", format=".2f"),
+                        alt.Tooltip("square_footage:Q", title="SF", format=",.0f"),
+                        alt.Tooltip("status:N", title="Status"),
+                    ],
+                )
+                .properties(height=320)
+                .interactive()
+            )
+            st.altair_chart(chart, use_container_width=True)
+
+    # ----- Action Required Command Center (kept as an alternative drill-in) -----
+    action_df = fdf[fdf["status"] == "🟢 Action Required"].reset_index(drop=True)
+    with st.expander(
+        f"🟢 Action Required — Due Diligence Command Center ({len(action_df)} deals)",
+        expanded=False,
+    ):
+        if action_df.empty:
+            st.info("No deals match the current Action-Required rule + filters.")
+        else:
+            for i, deal in action_df.iterrows():
+                render_command_center(deal, i, sb)
 
 
 # ---------- Analyzer tab ----------
