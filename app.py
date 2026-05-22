@@ -642,14 +642,16 @@ def render_sidebar() -> dict[str, Any]:
         asset_class = st.selectbox(
             "Asset class hint", ["(any)"] + PROPERTY_TYPES, index=0,
             help="Baked into the Crexi search query. Skootle doesn't expose a direct asset-class filter.",
+            key="sb_asset_class",
         )
         search_keywords_in = st.text_input(
             "Extra search keywords (optional)",
             value="",
             placeholder="e.g. net lease, value-add, NNN",
             help="Combined with state + asset class to build the Crexi search query.",
+            key="sb_keywords",
         )
-        max_props = st.slider("Max properties", 5, 200, DEFAULT_MAX_PROPERTIES, 5)
+        max_props = st.slider("Max properties", 5, 200, DEFAULT_MAX_PROPERTIES, 5, key="sb_max_props")
         st.caption(f"~Estimated cost: **${max_props * 0.04:,.2f}** at Free tier ($40/1k records).")
 
         run_btn = st.button(
@@ -658,32 +660,38 @@ def render_sidebar() -> dict[str, Any]:
             use_container_width=True,
             disabled=not _token_ok(),
             help=None if _token_ok() else "Set APIFY_TOKEN in .env first",
+            key="sb_run_btn",
         )
 
         with st.expander("…or load an existing dataset by id"):
-            ds_id_in = st.text_input("Dataset id", value=APIFY_DATASET_ID)
-            load_ds_btn = st.button("Load dataset", use_container_width=True, disabled=not _token_ok())
+            ds_id_in = st.text_input("Dataset id", value=APIFY_DATASET_ID, key="sb_ds_id")
+            load_ds_btn = st.button(
+                "Load dataset", use_container_width=True,
+                disabled=not _token_ok(), key="sb_load_ds_btn",
+            )
 
         st.divider()
         st.subheader("Action-Required rule")
-        min_cap = st.number_input("Min cap rate (%)", 0.0, 25.0, DEFAULT_MIN_CAP, 0.1)
+        min_cap = st.number_input("Min cap rate (%)", 0.0, 25.0, DEFAULT_MIN_CAP, 0.1, key="sb_min_cap")
         max_price_rule = st.number_input(
-            "Max asking price ($)", 0, 100_000_000, DEFAULT_MAX_PRICE, 100_000
+            "Max asking price ($)", 0, 100_000_000, DEFAULT_MAX_PRICE, 100_000, key="sb_max_price_rule",
         )
 
         st.divider()
         st.subheader("Underwriting assumptions")
-        hold_years = st.number_input("Hold years", 1, 30, DEFAULT_HOLD_YEARS, 1)
-        noi_growth = st.number_input("NOI growth (%)", 0.0, 15.0, DEFAULT_NOI_GROWTH, 0.25)
+        hold_years = st.number_input("Hold years", 1, 30, DEFAULT_HOLD_YEARS, 1, key="sb_hold_years")
+        noi_growth = st.number_input("NOI growth (%)", 0.0, 15.0, DEFAULT_NOI_GROWTH, 0.25, key="sb_noi_growth")
         exit_cap_delta = st.number_input(
             "Exit cap delta (bps over entry)", -200, 500, DEFAULT_EXIT_CAP_DELTA_BPS, 25,
             help="Exit cap = entry cap + this many bps. 0 = same cap.",
+            key="sb_exit_cap_delta",
         )
-        ltv = st.number_input("LTV (%)", 0.0, 100.0, DEFAULT_LTV, 1.0)
-        loan_rate = st.number_input("Loan rate (%)", 0.0, 20.0, DEFAULT_LOAN_RATE, 0.05)
-        amort_years = st.number_input("Amortization (years)", 5, 40, DEFAULT_AMORT_YEARS, 1)
+        ltv = st.number_input("LTV (%)", 0.0, 100.0, DEFAULT_LTV, 1.0, key="sb_ltv")
+        loan_rate = st.number_input("Loan rate (%)", 0.0, 20.0, DEFAULT_LOAN_RATE, 0.05, key="sb_loan_rate")
+        amort_years = st.number_input("Amortization (years)", 5, 40, DEFAULT_AMORT_YEARS, 1, key="sb_amort_years")
         discount_rate = st.number_input(
             "Discount rate / target yield (%)", 0.0, 30.0, DEFAULT_DISCOUNT_RATE, 0.5,
+            key="sb_discount_rate",
         )
 
         st.divider()

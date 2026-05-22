@@ -9,16 +9,36 @@ st.set_page_config(page_title="CRE Financial Dashboard", layout="wide")
 st.title("📈 Commercial Real Estate Financial Dashboard")
 st.markdown("---")
 
+# Apify-driven Deal Screener + Single-Deal Analyzer (render functions imported
+# from app.py — keeps their implementation in one place, reusable standalone).
+from app import render_sidebar, render_screener_tab, render_analyzer_tab
+
 # 1. Create the Tabs
-tab_tvm, tab_dcf, tab_screener, tab_proforma, tab_financing, tab_Leverage_Pro_forma = st.tabs([
-    "🔍 Universal TVM", 
-    "⚙️ Wealth Accumulation", 
+(
+    tab_tvm,
+    tab_dcf,
+    tab_screener,
+    tab_proforma,
+    tab_financing,
+    tab_Leverage_Pro_forma,
+    tab_deal_screener,
+    tab_analyzer,
+) = st.tabs([
+    "🔍 Universal TVM",
+    "⚙️ Wealth Accumulation",
     "📊 APOD (Year 1)",
     "📈 Multi-Year Pro Forma",
-    "🏦 Financing", 
-    "🏢 Leveraged Pro Forma"
-    
+    "🏦 Financing",
+    "🏢 Leveraged Pro Forma",
+    "🌐 Deal Screener",
+    "🔬 Deal Analyzer",
 ])
+
+# Initialize Apify-tab session state and render the (global) sidebar once.
+# The sidebar shows on every tab — Streamlit doesn't scope sidebars per-tab.
+st.session_state.setdefault("deals_rows", None)
+st.session_state.setdefault("data_source", "sample")
+_sidebar_state = render_sidebar()
 
 # ==========================================
 # TAB 1: UNIVERSAL TVM SOLVER
@@ -1351,3 +1371,16 @@ with tab_Leverage_Pro_forma:
         "Yield Increase": [f"{yield_inc_bt:.2f}%", f"{yield_inc_at:.2f}%", "—"]
     }
     st.table(pd.DataFrame(comp_data).set_index("Metric"))
+
+
+# ==========================================
+# TAB 7: DEAL SCREENER (Apify-driven Crexi pull)
+# ==========================================
+with tab_deal_screener:
+    render_screener_tab(_sidebar_state)
+
+# ==========================================
+# TAB 8: SINGLE-DEAL ANALYZER (URL / OM PDF / manual input)
+# ==========================================
+with tab_analyzer:
+    render_analyzer_tab(_sidebar_state)
