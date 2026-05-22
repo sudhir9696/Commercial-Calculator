@@ -177,12 +177,30 @@ def _extract_om_url(row: dict) -> str:
 
 
 def _is_georgia(row: dict) -> bool:
+    """Decide if a listing is actually in Georgia.
+
+    Skootle occasionally tags rows with `state: GA` even when the address is
+    out-of-state (likely because it parsed the broker's address instead of the
+    property's, then defaulted state from the search). So we trust the address
+    body over the state field: if the address contains a `<state> <zip>` pattern
+    where state isn't GA, reject.
+    """
     state = str(row.get("state") or "").strip().upper().rstrip(".,")
+    addr_blob = " ".join(
+        str(row.get(k) or "") for k in
+        ("address", "title", "propertyAddress", "fullAddress", "city")
+    ).upper()
+
+    # Find any "XX 12345" patterns (state code before a 5-digit zip).
+    state_zip_matches = re.findall(r"\b([A-Z]{2})\s+\d{5}(?:-\d{4})?\b", addr_blob)
+    if state_zip_matches:
+        # If every state-zip pair is GA, accept. If any is non-GA, reject.
+        if all(s in GA_ALIASES for s in state_zip_matches):
+            return True
+        return False
+
     if state in GA_ALIASES:
         return True
-    addr_blob = " ".join(
-        str(row.get(k) or "") for k in ("address", "propertyAddress", "fullAddress", "city")
-    ).upper()
     return bool(re.search(r"\b(GA|GEORGIA)\b", addr_blob))
 
 
@@ -199,7 +217,9 @@ def normalize_rows(rows: list[dict], *, georgia_only: bool = True) -> pd.DataFra
     canonical: list[dict[str, Any]] = []
     for r in rows:
         explicit_state = str(r.get("state") or "").strip().upper().rstrip(".,")
-        if georgia_only and explicit_state and explicit_state not in GA_ALIASES and not _is_georgia(r):
+        # Always defer to _is_georgia — it handles the Skootle mis-tag case
+        # (state="GA" on an out-of-state property) by reading the address body.
+        if georgia_only and not _is_georgia(r):
             continue
         canonical.append({
             "address": _compose_address(r),
