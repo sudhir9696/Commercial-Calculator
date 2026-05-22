@@ -1,0 +1,12 @@
+[server]
+# Auto-rerun the app whenever app.py (or any watched file) changes on disk.
+# No more "Source file changed. Rerun." banner — saves are picked up immediately.
+runOnSave = true
+headless = true
+port = 8501
+
+[browser]
+gatherUsageStats = false
+
+[runner]
+fastReruns = true

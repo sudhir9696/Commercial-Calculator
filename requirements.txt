@@ -1,2 +1,7 @@
 streamlit
 numpy-financial
+pandas
+python-dotenv
+openpyxl
+requests
+pypdf
