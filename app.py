@@ -744,17 +744,51 @@ def render_sidebar() -> dict[str, Any]:
             "City or County (optional)",
             value="",
             placeholder="e.g. Atlanta, Cumming, Forsyth County",
-            help="Narrows the Crexi search to a specific GA submarket. Free-text — try the city, "
-                 "or the county name (e.g. 'Forsyth County').",
+            help="Narrows to a specific GA submarket.",
             key="sb_city",
         )
+
+        st.markdown("**Price & cap filters**")
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            price_min_in = st.number_input(
+                "Min price ($M)", 0.0, 500.0, 0.0, 0.25, format="%.2f",
+                key="sb_price_min", help="In millions. 0 = no minimum.",
+            )
+        with pc2:
+            price_max_in = st.number_input(
+                "Max price ($M)", 0.0, 500.0, 0.0, 0.25, format="%.2f",
+                key="sb_price_max", help="In millions. 0 = no maximum.",
+            )
+        cap_min_in = st.number_input(
+            "Min cap rate (%)", 0.0, 20.0, 0.0, 0.25, format="%.2f",
+            key="sb_cap_min", help="0 = no minimum.",
+        )
+        lease_type_in = st.selectbox(
+            "Lease type", ["(any)", "NNN", "NN", "Gross", "Modified Gross", "Absolute Net"],
+            index=0, key="sb_lease_type",
+        )
+
         search_keywords_in = st.text_input(
-            "Extra search keywords (optional)",
+            "Extra free-text keywords (optional)",
             value="",
-            placeholder="e.g. net lease, value-add, NNN",
-            help="Combined with state + asset class + city/county to build the Crexi search query.",
+            placeholder="e.g. value-add, anchored, drive-thru",
+            help="Appended verbatim to the Crexi search query.",
             key="sb_keywords",
         )
+
+        # Live query preview so the user can see exactly what's sent to Crexi.
+        _query_parts = [
+            None if asset_class == "(any)" else asset_class,
+            city_or_county_in.strip() or None,
+            None if lease_type_in == "(any)" else lease_type_in,
+            f"${price_min_in:.1f}M-${price_max_in:.1f}M" if (price_min_in or price_max_in) else None,
+            f"{cap_min_in:.1f}% cap" if cap_min_in else None,
+            search_keywords_in.strip() or None,
+            "georgia",
+        ]
+        _preview_query = " ".join(p for p in _query_parts if p)
+        st.caption(f"🔎 Crexi query preview: `{_preview_query}`")
         max_props = st.slider("Max properties", 5, 200, DEFAULT_MAX_PROPERTIES, 5, key="sb_max_props")
         # Escape $ so Streamlit's markdown doesn't read $1.00 * at Free tier ($40 as LaTeX.
         st.caption(f"~Estimated cost: **\\${max_props * 0.04:,.2f}** at Free tier (\\$40/1k records).")
@@ -805,7 +839,12 @@ def render_sidebar() -> dict[str, Any]:
     return {
         "asset_class": None if asset_class == "(any)" else asset_class,
         "city_or_county": city_or_county_in.strip(),
+        "lease_type": None if lease_type_in == "(any)" else lease_type_in,
+        "price_min_m": float(price_min_in),
+        "price_max_m": float(price_max_in),
+        "cap_min": float(cap_min_in),
         "extra_keywords": search_keywords_in.strip(),
+        "search_query_preview": _preview_query,
         "max_props": max_props,
         "run_btn": run_btn,
         "ds_id_in": ds_id_in,
@@ -936,15 +975,8 @@ def render_command_center(deal: pd.Series, idx: int, sb: dict) -> None:
 
 def render_screener_tab(sb: dict) -> None:
     if sb["run_btn"]:
-        # Build the Crexi search query (skootle has no separate state/asset/price filters —
-        # everything goes through searchKeywords).
-        query_parts = [
-            sb["asset_class"] or "",
-            sb["city_or_county"] or "",
-            sb["extra_keywords"] or "",
-            "georgia",
-        ]
-        query = " ".join(p for p in query_parts if p).strip()
+        # Use the sidebar's preview query verbatim — what the user sees IS what gets sent.
+        query = sb["search_query_preview"]
         with st.status(f"Crexi scrape: '{query}' · max {sb['max_props']}", expanded=True) as status:
             try:
                 status.write("Starting actor run on Apify…")
