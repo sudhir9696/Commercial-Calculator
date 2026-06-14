@@ -1024,9 +1024,42 @@ def render_sidebar() -> dict[str, Any]:
         ]
         _preview_query = " ".join(p for p in _query_parts if p)
         st.caption(f"🔎 Crexi query preview: `{_preview_query}`")
-        max_props = st.slider("Max properties", 5, 200, DEFAULT_MAX_PROPERTIES, 5, key="sb_max_props")
-        # Escape $ so Streamlit's markdown doesn't read $1.00 * at Free tier ($40 as LaTeX.
-        st.caption(f"~Estimated cost: **\\${max_props * 0.04:,.2f}** at Free tier (\\$40/1k records).")
+        st.markdown("**Bulk URL mode** *(recommended right now)*")
+        st.caption(
+            "⚠️ Crexi changed their search UI; skootle and cypherai both return 0 on search-based "
+            "fetches. The `propertyUrls` path still works perfectly. Paste Crexi listing URLs below "
+            "and we'll fetch each one."
+        )
+        bulk_urls_in = st.text_area(
+            "Paste Crexi property URLs (one per line)",
+            value="",
+            placeholder=(
+                "https://www.crexi.com/properties/2287401/georgia-chase-bank-cumming-ga\n"
+                "https://www.crexi.com/properties/2314443/...\n"
+                "https://www.crexi.com/properties/2320294/..."
+            ),
+            help="Go to crexi.com, run your search there, copy the URLs of listings you want, "
+                 "paste them here. Each URL ≈ $0.04 on Free tier.",
+            key="sb_bulk_urls",
+            height=120,
+        )
+        max_props = st.slider("Max properties (fallback for search mode)", 5, 200, DEFAULT_MAX_PROPERTIES, 5, key="sb_max_props")
+
+        # Compute parsed URL list + cost estimate for the active mode.
+        _parsed_urls = [
+            u.strip() for u in bulk_urls_in.splitlines()
+            if u.strip().startswith("http")
+        ]
+        if _parsed_urls:
+            st.caption(
+                f"Bulk URL mode: **{len(_parsed_urls)} URLs** queued · "
+                f"~Estimated cost: **\\${len(_parsed_urls) * 0.04:,.2f}**"
+            )
+        else:
+            st.caption(
+                f"Search mode (degraded — may return 0): max {max_props} · "
+                f"~Estimated cost: **\\${max_props * 0.04:,.2f}** at Free tier"
+            )
 
         run_btn = st.button(
             "🔄 Fetch live deals from Crexi",
@@ -1089,6 +1122,7 @@ def render_sidebar() -> dict[str, Any]:
         "cap_min": float(cap_min_in),
         "extra_keywords": search_keywords_in.strip(),
         "search_query_preview": _preview_query,
+        "bulk_urls": _parsed_urls,
         "max_props": max_props,
         "run_btn": run_btn,
         "ds_id_in": ds_id_in,
@@ -1245,11 +1279,14 @@ def render_command_center(deal: pd.Series, idx: int, sb: dict) -> None:
 
 def render_screener_tab(sb: dict) -> None:
     if sb["run_btn"]:
-        # Crexi's search parser stumbles on punctuation (`/`, double spaces);
-        # strip those so the keyword string lands cleanly.
+        bulk_urls = sb.get("bulk_urls") or []
+        # Crexi's search parser stumbles on punctuation (`/`, double spaces); strip.
         raw_query = sb["search_query_preview"]
         query = re.sub(r"\s+", " ", re.sub(r"[/]+", " ", raw_query)).strip()
-        with st.status(f"Crexi scrape: '{query}' · max {sb['max_props']}", expanded=True) as status:
+
+        # Mode selection: bulk URLs (working path) wins when present.
+        mode_label = f"{len(bulk_urls)} URLs (propertyUrls)" if bulk_urls else f"search query '{query}'"
+        with st.status(f"Crexi fetch: {mode_label}", expanded=True) as status:
             try:
                 status.write("Starting actor run on Apify…")
 
@@ -1257,27 +1294,47 @@ def render_screener_tab(sb: dict) -> None:
                     status.update(label=f"{run_status} · {elapsed}s elapsed · {items} items collected")
 
                 property_types_payload = ASSET_CLASS_CATALOG.get(sb["asset_class"], []) if sb["asset_class"] else []
-                # locations array per Product Owner spec: send the City/County
-                # text. Skootle ignores this field today, but it documents intent
-                # and is consumed if the actor adds support later. The actual
-                # location filtering happens via searchKeywords (Crexi parses it).
                 city_county = (sb.get("city_or_county") or "").strip()
                 locations_payload = [city_county] if city_county else None
-                rows, run_meta = run_actor_async(
-                    APIFY_TOKEN,
-                    DEFAULT_ACTOR_ID,
-                    search_keywords=[query],
-                    property_types=property_types_payload or None,
-                    locations=locations_payload,
-                    max_items=sb["max_props"],
-                    progress_cb=_on_progress,
-                )
+
+                if bulk_urls:
+                    # WORKING PATH: skootle's propertyUrls handles direct listing
+                    # URLs reliably (62 fields per item) even though its search-
+                    # results scraping is currently degraded by Crexi UI changes.
+                    rows, run_meta = run_actor_async(
+                        APIFY_TOKEN, DEFAULT_ACTOR_ID,
+                        property_urls=bulk_urls,
+                        max_items=len(bulk_urls),
+                        progress_cb=_on_progress,
+                    )
+                    source_label = f"bulk-URL fetch ({len(bulk_urls)} URLs requested, {len(rows)} returned, run {run_meta.get('id','?')})"
+                else:
+                    # DEGRADED PATH: try search anyway, warn user it likely returns 0.
+                    status.write("⚠️ Search-based fetch is degraded right now (Crexi UI change). "
+                                 "Expect 0 results — paste URLs in the sidebar for the working path.")
+                    rows, run_meta = run_actor_async(
+                        APIFY_TOKEN, DEFAULT_ACTOR_ID,
+                        search_keywords=[query],
+                        property_types=property_types_payload or None,
+                        locations=locations_payload,
+                        max_items=sb["max_props"],
+                        progress_cb=_on_progress,
+                    )
+                    source_label = f"actor query='{query}' ({len(rows)} items, run {run_meta.get('id','?')})"
+
                 st.session_state["deals_rows"] = rows
-                st.session_state["data_source"] = (
-                    f"actor query='{query}' ({len(rows)} items, run {run_meta.get('id','?')})"
-                )
-                save_last_fetch(rows, st.session_state["data_source"], query)
-                status.update(label=f"✅ Fetched {len(rows)} GA listings from Crexi.", state="complete")
+                st.session_state["data_source"] = source_label
+                save_last_fetch(rows, source_label, query if not bulk_urls else f"BULK ({len(bulk_urls)} URLs)")
+                if rows:
+                    status.update(label=f"✅ Fetched {len(rows)} GA listings from Crexi.", state="complete")
+                else:
+                    status.update(
+                        label=(
+                            f"⚠️ Fetch completed but returned 0 items. "
+                            f"{'No matching listings.' if bulk_urls else 'Search actor degraded — switch to Bulk URL mode.'}"
+                        ),
+                        state="error",
+                    )
             except Exception as exc:
                 exc_text = str(exc)
                 status.update(label=f"❌ {exc_text}", state="error")
@@ -1331,6 +1388,15 @@ def render_screener_tab(sb: dict) -> None:
     if not rows:
         with st.container(border=True):
             st.subheader("📡 No live deals loaded")
+            st.warning(
+                "**Crexi search-based scraping is degraded right now.** Two different Apify "
+                "actors (skootle, cypherai) both return 0 items for Crexi search results. "
+                "The direct-URL fetch path still works. **Workflow:**\n\n"
+                "1. Open **crexi.com** in another tab and run your search there (their human search works).\n"
+                "2. Copy the URLs of the listings you want to analyze.\n"
+                "3. Paste them into **Bulk URL mode** in the sidebar (one per line).\n"
+                "4. Click 🔄 Fetch — each URL ≈ $0.04, returns full data (cap rate, SF, broker, etc.)."
+            )
             st.markdown(
                 "This dashboard shows **only live Apify data** — there is no demo / mock dataset. "
                 "Configure the search in the sidebar and click 🔄 to pull listings."
