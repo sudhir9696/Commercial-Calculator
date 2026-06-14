@@ -377,15 +377,34 @@ def _build_actor_payload(
 
 # ---------- Apify backend abstraction (apify-client preferred, REST fallback) ----------
 
-def _apify_start_run(token: str, actor_id: str, payload: dict[str, Any]) -> str:
+def _apify_start_run(
+    token: str, actor_id: str, payload: dict[str, Any], *,
+    actor_timeout_secs: int = DEFAULT_RUN_TIMEOUT_SECS,
+) -> str:
+    """Start a run and set the platform-level max run time.
+
+    Apify's default actor run time is conservatively short (~5 min for many
+    actors). Crexi scraping over a residential proxy regularly needs more —
+    we pass `actor_timeout_secs` (default 900 = 15 min) so the platform
+    doesn't kill the run before it finishes scraping the first page.
+    """
     if _USE_APIFY_CLIENT and ApifyClient is not None:
-        run = _to_dict(ApifyClient(token).actor(actor_id).start(run_input=payload))
-        run_id = run.get("id")
-        if run_id:
-            return str(run_id)
-        # Pydantic model conversion lost the id — fall through to REST.
+        try:
+            run = _to_dict(ApifyClient(token).actor(actor_id).start(
+                run_input=payload, timeout_secs=actor_timeout_secs,
+            ))
+            run_id = run.get("id")
+            if run_id:
+                return str(run_id)
+        except Exception:
+            pass  # fall through to REST
     url = f"https://api.apify.com/v2/acts/{actor_id}/runs"
-    resp = requests.post(url, params={"token": token}, json=payload, timeout=30)
+    resp = requests.post(
+        url,
+        params={"token": token, "timeout": actor_timeout_secs},
+        json=payload,
+        timeout=30,
+    )
     if not resp.ok:
         raise RuntimeError(_apify_error_message(resp))
     return resp.json()["data"]["id"]
@@ -460,7 +479,7 @@ def run_actor_async(
         property_types=property_types, locations=locations,
         max_items=max_items, max_search_pages=max_search_pages,
     )
-    run_id = _apify_start_run(token, actor_id, payload)
+    run_id = _apify_start_run(token, actor_id, payload, actor_timeout_secs=timeout_secs)
     start = time.monotonic()
     last: dict[str, Any] = {"id": run_id, "status": "READY"}
 
@@ -1226,8 +1245,10 @@ def render_command_center(deal: pd.Series, idx: int, sb: dict) -> None:
 
 def render_screener_tab(sb: dict) -> None:
     if sb["run_btn"]:
-        # Use the sidebar's preview query verbatim — what the user sees IS what gets sent.
-        query = sb["search_query_preview"]
+        # Crexi's search parser stumbles on punctuation (`/`, double spaces);
+        # strip those so the keyword string lands cleanly.
+        raw_query = sb["search_query_preview"]
+        query = re.sub(r"\s+", " ", re.sub(r"[/]+", " ", raw_query)).strip()
         with st.status(f"Crexi scrape: '{query}' · max {sb['max_props']}", expanded=True) as status:
             try:
                 status.write("Starting actor run on Apify…")
@@ -1258,9 +1279,25 @@ def render_screener_tab(sb: dict) -> None:
                 save_last_fetch(rows, st.session_state["data_source"], query)
                 status.update(label=f"✅ Fetched {len(rows)} GA listings from Crexi.", state="complete")
             except Exception as exc:
-                status.update(label=f"❌ {exc}", state="error")
-                st.error("Try lowering 'Max properties' to 5, or narrow the query (add a city/county) "
-                         "to reduce scrape time.")
+                exc_text = str(exc)
+                status.update(label=f"❌ {exc_text}", state="error")
+                if "TIMED-OUT" in exc_text or "TIMEOUT" in exc_text.upper():
+                    st.error(
+                        "**Apify run timed out before scraping any results.** The residential "
+                        "proxy is slow to handshake with Crexi. Try one of:\n\n"
+                        "1. **Drop Max properties to 5** (sidebar slider) — smaller jobs land faster.\n"
+                        "2. **Add or change the City/County** in the sidebar — narrower searches "
+                        "return fewer pages to scrape.\n"
+                        "3. **Wait 60 seconds and click Fetch again** — Apify's residential proxy "
+                        "pool sometimes recovers between attempts.\n"
+                        "4. **Try a different asset class hint** — some Crexi queries (rare niches) "
+                        "return a slow-loading detail page."
+                    )
+                else:
+                    st.error(
+                        "Try lowering 'Max properties' to 5, or narrow the query "
+                        "(add a city/county) to reduce scrape time."
+                    )
 
     if sb["load_ds_btn"] and sb["ds_id_in"].strip():
         with st.spinner(f"Loading dataset {sb['ds_id_in']}…"):
