@@ -94,6 +94,62 @@ TOKEN_PLACEHOLDER = "your_apify_token_here"
 
 DEFAULT_ACTOR_ID = "skootle~crexi-commercial-real-estate-scraper"
 DEFAULT_STATE_CODE = "GA"
+
+# Actor catalog. Skootle is the default because it's the only one we've
+# verified returns full-field data (62 fields on a live propertyUrls fetch
+# this session). Crawlerbros is included for compatibility but returns only
+# ~6 sparse fields per item — the screener's verdict logic will be blind.
+ACTOR_CATALOG: dict[str, dict[str, Any]] = {
+    "skootle (recommended)": {
+        "id": "skootle~crexi-commercial-real-estate-scraper",
+        "warning": None,
+        "supports_search": True,
+        "supports_property_urls": True,
+    },
+    "crawlerbros (sparse — verdict logic blind)": {
+        "id": "crawlerbros~crexi-real-estate-scraper",
+        "warning": (
+            "⚠️ crawlerbros returns only 6 fields per item (no cap rate, no SF, no address). "
+            "Action-Required / GO verdicts can't compute on this data."
+        ),
+        "supports_search": True,
+        "supports_property_urls": False,
+    },
+}
+
+# All US states (2-letter code), for the State selector. GA is the default.
+US_STATES: list[str] = [
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
+]
+
+# Sub-class keyword library (case-insensitive scan over title + description +
+# native subtype tags). Used to add a `Sub-Class` column in the final table.
+SUBCLASS_KEYWORDS: dict[str, list[str]] = {
+    "Gas Station": [
+        "gas station", " gas ", "fuel", "petroleum", "mpd", "canopy",
+        "convenience store", "c-store", " station ", "filling station",
+    ],
+    "Car Wash": [
+        "car wash", " wash ", "tunnel wash", "detail", "wand", "express wash",
+        "automated wash",
+    ],
+    "Laundromat": [
+        "laundromat", "coin laundry", "wash-and-fold", "wash and fold",
+        "coin operated", "coin-op",
+    ],
+    "Quick-Lube / Auto Service": [
+        "quick lube", "quick-lube", "oil change", "lube center", "auto service",
+        "automotive service", "lube + tire",
+    ],
+    "Self-Storage": [
+        "self storage", "self-storage", "mini-storage", "storage facility",
+        "climate controlled storage",
+    ],
+}
 DEFAULT_MIN_CAP = 7.0
 DEFAULT_MAX_PRICE = 5_000_000
 DEFAULT_MAX_PROPERTIES = 10
@@ -267,6 +323,33 @@ def _is_georgia(row: dict) -> bool:
     return bool(re.search(r"\b(GA|GEORGIA)\b", addr_blob))
 
 
+def extract_subclass(raw: dict, fallback: str = "") -> str:
+    """Identify the asset sub-class by scanning title + description + native subtype tags.
+
+    Priority order:
+      1. Match keyword groups in SUBCLASS_KEYWORDS (Gas Station, Car Wash, etc.).
+      2. Use the actor's native subtype field (`propertySubType`, `assetSubType`)
+         when no keyword hits.
+      3. Fall back to the main `assetClass` / `property_type` field.
+    """
+    blob = " ".join(
+        str(raw.get(k) or "")
+        for k in (
+            "title", "description", "agentMarkdown", "name",
+            "propertySubType", "assetSubType", "tenantName",
+            "address",
+        )
+    ).lower()
+    if blob:
+        for subclass, keywords in SUBCLASS_KEYWORDS.items():
+            if any(kw.lower() in blob for kw in keywords):
+                return subclass
+    native_subtype = raw.get("propertySubType") or raw.get("assetSubType")
+    if native_subtype:
+        return str(native_subtype)
+    return fallback or ""
+
+
 def normalize_rows(rows: list[dict], *, georgia_only: bool = True) -> pd.DataFrame:
     """Normalize Apify rows into the dashboard's canonical schema.
 
@@ -284,10 +367,12 @@ def normalize_rows(rows: list[dict], *, georgia_only: bool = True) -> pd.DataFra
         # (state="GA" on an out-of-state property) by reading the address body.
         if georgia_only and not _is_georgia(r):
             continue
+        property_type = _first_present(r, ("assetClass", "assetSubType", "propertySubType", "propertyType", "property_type")) or ""
         canonical.append({
             "address": _compose_address(r),
             "state": explicit_state,
-            "property_type": _first_present(r, ("assetClass", "assetSubType", "propertySubType", "propertyType", "property_type")) or "",
+            "property_type": property_type,
+            "sub_class": extract_subclass(r, fallback=property_type),
             "asking_price": _coerce_float(_first_present(r, ("askingPriceUsd", "askingPrice", "price", "asking_price", "listPrice"))),
             "cap_rate_pct": _coerce_float(_first_present(r, ("capRatePct", "capRate", "cap_rate", "cap_rate_pct"))),
             "square_footage": _coerce_int(_first_present(r, ("squareFootageNum", "squareFootage", "buildingSqft", "square_footage", "squareFeet", "buildingSize", "sf", "size"))),
@@ -962,7 +1047,27 @@ def _token_ok() -> bool:
 def render_sidebar() -> dict[str, Any]:
     with st.sidebar:
         st.subheader("Apify — Crexi scraper")
-        st.caption(f"Actor: `{DEFAULT_ACTOR_ID}`  ·  Locked to state **{DEFAULT_STATE_CODE}**")
+
+        actor_choice = st.selectbox(
+            "Apify actor",
+            list(ACTOR_CATALOG.keys()),
+            index=0,
+            key="sb_actor",
+            help="skootle is the default — only one we've verified returns full-field data. "
+                 "crawlerbros is sparser (no cap rate / SF / address) and will leave the "
+                 "verdict column blank.",
+        )
+        _actor_meta = ACTOR_CATALOG[actor_choice]
+        if _actor_meta["warning"]:
+            st.warning(_actor_meta["warning"], icon="⚠️")
+
+        state_code = st.selectbox(
+            "State",
+            US_STATES,
+            index=US_STATES.index(DEFAULT_STATE_CODE),
+            key="sb_state",
+            help="Sent in the locations array and baked into the search query.",
+        )
 
         asset_class = st.selectbox(
             "Asset class",
@@ -1013,6 +1118,7 @@ def render_sidebar() -> dict[str, Any]:
         )
 
         # Live query preview so the user can see exactly what's sent to Crexi.
+        _state_text = state_code  # Send the 2-letter state code into the search query
         _query_parts = [
             None if asset_class == "(any)" else asset_class,
             city_or_county_in.strip() or None,
@@ -1020,7 +1126,7 @@ def render_sidebar() -> dict[str, Any]:
             f"${price_min_in:.1f}M-${price_max_in:.1f}M" if (price_min_in or price_max_in) else None,
             f"{cap_min_in:.1f}% cap" if cap_min_in else None,
             search_keywords_in.strip() or None,
-            "georgia",
+            _state_text,
         ]
         _preview_query = " ".join(p for p in _query_parts if p)
         st.caption(f"🔎 Crexi query preview: `{_preview_query}`")
@@ -1114,6 +1220,9 @@ def render_sidebar() -> dict[str, Any]:
             st.caption("Apify backend: 🟢 raw REST (apify-client not installed)")
 
     return {
+        "actor_id": _actor_meta["id"],
+        "actor_label": actor_choice,
+        "state_code": state_code,
         "asset_class": None if asset_class == "(any)" else asset_class,
         "city_or_county": city_or_county_in.strip(),
         "lease_type": None if lease_type_in == "(any)" else lease_type_in,
@@ -1284,46 +1393,67 @@ def render_screener_tab(sb: dict) -> None:
         raw_query = sb["search_query_preview"]
         query = re.sub(r"\s+", " ", re.sub(r"[/]+", " ", raw_query)).strip()
 
-        # Mode selection: bulk URLs (working path) wins when present.
+        # Build the exact payload we'll send — exposed via st.info on screen
+        # so the user can verify filters before / after the run.
+        property_types_payload = ASSET_CLASS_CATALOG.get(sb["asset_class"], []) if sb["asset_class"] else []
+        city_county = (sb.get("city_or_county") or "").strip()
+        # locations: the actor's native field. Crawlerbros only accepts state
+        # codes, so we send the state code first; the city/county string is
+        # included only as a forward-compat marker (silently ignored today).
+        locations_payload: list[str] = [sb["state_code"]]
+        if city_county:
+            locations_payload.append(city_county)
+
+        actor_id = sb["actor_id"]
         mode_label = f"{len(bulk_urls)} URLs (propertyUrls)" if bulk_urls else f"search query '{query}'"
-        with st.status(f"Crexi fetch: {mode_label}", expanded=True) as status:
+        with st.status(f"Crexi fetch: actor={actor_id} · {mode_label}", expanded=True) as status:
             try:
                 status.write("Starting actor run on Apify…")
 
                 def _on_progress(elapsed: int, run_status: str, items: int) -> None:
                     status.update(label=f"{run_status} · {elapsed}s elapsed · {items} items collected")
 
-                property_types_payload = ASSET_CLASS_CATALOG.get(sb["asset_class"], []) if sb["asset_class"] else []
-                city_county = (sb.get("city_or_county") or "").strip()
-                locations_payload = [city_county] if city_county else None
-
                 if bulk_urls:
                     # WORKING PATH: skootle's propertyUrls handles direct listing
                     # URLs reliably (62 fields per item) even though its search-
                     # results scraping is currently degraded by Crexi UI changes.
                     rows, run_meta = run_actor_async(
-                        APIFY_TOKEN, DEFAULT_ACTOR_ID,
+                        APIFY_TOKEN, actor_id,
                         property_urls=bulk_urls,
                         max_items=len(bulk_urls),
                         progress_cb=_on_progress,
                     )
-                    source_label = f"bulk-URL fetch ({len(bulk_urls)} URLs requested, {len(rows)} returned, run {run_meta.get('id','?')})"
+                    source_label = (
+                        f"bulk-URL fetch via {actor_id} "
+                        f"({len(bulk_urls)} URLs requested, {len(rows)} returned, run {run_meta.get('id','?')})"
+                    )
                 else:
-                    # DEGRADED PATH: try search anyway, warn user it likely returns 0.
                     status.write("⚠️ Search-based fetch is degraded right now (Crexi UI change). "
                                  "Expect 0 results — paste URLs in the sidebar for the working path.")
                     rows, run_meta = run_actor_async(
-                        APIFY_TOKEN, DEFAULT_ACTOR_ID,
+                        APIFY_TOKEN, actor_id,
                         search_keywords=[query],
                         property_types=property_types_payload or None,
                         locations=locations_payload,
                         max_items=sb["max_props"],
                         progress_cb=_on_progress,
                     )
-                    source_label = f"actor query='{query}' ({len(rows)} items, run {run_meta.get('id','?')})"
+                    source_label = (
+                        f"search via {actor_id} query='{query}' "
+                        f"({len(rows)} items, run {run_meta.get('id','?')})"
+                    )
 
                 st.session_state["deals_rows"] = rows
                 st.session_state["data_source"] = source_label
+                st.session_state["last_payload"] = _build_actor_payload(
+                    search_keywords=None if bulk_urls else [query],
+                    start_urls=None,
+                    property_urls=bulk_urls or None,
+                    property_types=property_types_payload or None,
+                    locations=None if bulk_urls else locations_payload,
+                    max_items=(len(bulk_urls) if bulk_urls else sb["max_props"]),
+                    max_search_pages=5,
+                )
                 save_last_fetch(rows, source_label, query if not bulk_urls else f"BULK ({len(bulk_urls)} URLs)")
                 if rows:
                     status.update(label=f"✅ Fetched {len(rows)} GA listings from Crexi.", state="complete")
@@ -1441,6 +1571,14 @@ def render_screener_tab(sb: dict) -> None:
     else:
         st.success(f"🟢 Live data: {st.session_state['data_source']}", icon="✅")
 
+    # Per Product Owner spec: show the exact Apify run_input payload that was
+    # last sent. Lets you verify filters (state, locations, propertyTypes, etc.)
+    # without round-tripping to the Apify console.
+    last_payload = st.session_state.get("last_payload")
+    if last_payload:
+        with st.expander("🛰️ Last Apify run_input payload (verify filters)", expanded=False):
+            st.json(last_payload)
+
     # ----- Top metrics -----
     go_count = int((df["verdict"] == VERDICT_GO).sum()) if not df.empty else 0
     action_count = int((df["verdict"] == VERDICT_ACTION).sum()) if not df.empty else 0
@@ -1506,7 +1644,8 @@ def render_screener_tab(sb: dict) -> None:
     st.subheader(f"All deals · {len(fdf)} after filter")
     # Reorder columns so the verdict / tax-alpha / flags signals show first.
     display_cols = [c for c in [
-        "address", "property_type", "asking_price", "cap_rate_pct", "square_footage",
+        "address", "property_type", "sub_class",
+        "asking_price", "cap_rate_pct", "square_footage",
         "verdict", "15_Yr_Accelerated_Depreciation", "flags",
         "om_url", "listing_url",
     ] if c in fdf.columns]
@@ -1524,6 +1663,11 @@ def render_screener_tab(sb: dict) -> None:
             "listing_url": st.column_config.LinkColumn("Listing"),
             "verdict": st.column_config.TextColumn("Verdict"),
             "property_type": st.column_config.TextColumn("Type"),
+            "sub_class": st.column_config.TextColumn(
+                "Sub-Class",
+                help="Parsed from listing title + description + native subtype tags. "
+                     "Falls back to the main asset class when no keywords match.",
+            ),
             "15_Yr_Accelerated_Depreciation": st.column_config.CheckboxColumn(
                 "⚡ 15-yr", help="IRS Class 57.1 — qualifies for 15-year accelerated depreciation",
                 disabled=True,
