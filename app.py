@@ -128,6 +128,63 @@ US_STATES: list[str] = [
 
 # Sub-class keyword library (case-insensitive scan over title + description +
 # native subtype tags). Used to add a `Sub-Class` column in the final table.
+# Crexi's native Property Type taxonomy. Top-level keys match Crexi's UI
+# checkboxes exactly. Sub-categories are best-effort from CRE industry
+# standards — verify exact strings against Crexi's checkbox UI; some may
+# differ in wording. Adding the category to `propertyTypes` in the payload
+# matches what their filter API expects.
+CREXI_TAXONOMY: dict[str, list[str]] = {
+    "Retail": [
+        "Strip Center", "Anchored Center", "Free Standing",
+        "Mixed Use Building", "Restaurant/Bar", "Bank",
+        "Drug Store/Pharmacy", "Single Tenant NNN", "Multi-Tenant",
+    ],
+    "Multifamily": [
+        "Garden Style (Low-Rise)", "Mid-Rise", "High-Rise", "Townhomes",
+        "Student Housing", "Affordable Housing",
+        "Single Family Rental Portfolio",
+    ],
+    "Office": [
+        "Class A", "Class B", "Class C", "Medical Office",
+        "Coworking / Executive Suites",
+    ],
+    "Industrial": [
+        "Warehouse / Distribution", "Flex Space", "R&D",
+        "Manufacturing", "Cold Storage", "Truck Terminal",
+    ],
+    "Hospitality": [
+        "Full Service Hotel", "Limited Service Hotel",
+        "Bed & Breakfast", "Motel", "Resort", "Extended Stay",
+    ],
+    "Mixed Use": [],
+    "Land": [
+        "Commercial Land", "Residential Land",
+        "Industrial Land", "Agricultural Land",
+    ],
+    "Self Storage": [],
+    "Mobile Home Park": [],
+    "Senior Living": [],
+    "Special Purpose": [
+        "Auto Dealer", "Car Wash", "Day Care", "Funeral Home",
+        "Gas Station / Fuel Station", "Marina", "Religious", "Theater",
+    ],
+    "Note/Loan": [],
+    "Business for Sale": [
+        "Restaurant", "Retail Business", "Service Business",
+        "Manufacturing Business", "Auto Service", "Liquor Store",
+    ],
+}
+
+# Crexi sub-types that should ALSO trigger the 15-yr accelerated depreciation
+# flag (IRS Class 57.1) and the Phase 1 environmental advisory — keeps the
+# tax-alpha logic working when the user picks the Crexi-native filter.
+CREXI_SUBTYPE_TAX_ALPHA: set[str] = {
+    "Gas Station / Fuel Station", "Car Wash",
+}
+CREXI_SUBTYPE_PHASE_1: set[str] = {
+    "Gas Station / Fuel Station", "Car Wash", "Auto Dealer",
+}
+
 SUBCLASS_KEYWORDS: dict[str, list[str]] = {
     "Gas Station": [
         "gas station", " gas ", "fuel", "petroleum", "mpd", "canopy",
@@ -680,7 +737,11 @@ def analyze_and_score(df: pd.DataFrame, sb: dict[str, Any]) -> pd.DataFrame:
     df["flags"] = combined_text.apply(_scan_description_for_flags)
 
     asset_label = (sb.get("asset_class") or "").strip()
-    is_tax_alpha_class = asset_label in TAX_ALPHA_ASSET_CLASSES
+    crexi_sub = (sb.get("crexi_sub_type") or "").strip()
+    is_tax_alpha_class = (
+        asset_label in TAX_ALPHA_ASSET_CLASSES
+        or crexi_sub in CREXI_SUBTYPE_TAX_ALPHA
+    )
     df["15_Yr_Accelerated_Depreciation"] = bool(is_tax_alpha_class)
 
     df["verdict"] = VERDICT_REVIEW
@@ -1070,16 +1131,38 @@ def render_sidebar() -> dict[str, Any]:
         )
 
         asset_class = st.selectbox(
-            "Asset class",
+            "Strategy preset (Asset class shortcut)",
             ["(any)"] + list(ASSET_CLASS_CATALOG.keys()),
             index=0,
             help=(
-                "User-friendly label drives the Crexi search query (free-text) and is mapped to "
-                "Crexi `propertyTypes` in the actor payload. Picking 'Gas Station' or 'Express "
-                "Car Wash' also unlocks the IRS Class 57.1 15-year-depreciation tag."
+                "User-friendly tax-alpha shortcuts. Picking 'Gas Station' or 'Express Car Wash' "
+                "unlocks the IRS Class 57.1 15-year-depreciation tag. Use the Crexi-native "
+                "selectors below for finer category/sub-type filtering aligned with Crexi's UI."
             ),
             key="sb_asset_class",
         )
+
+        st.markdown("**Crexi native category** *(matches Crexi's Property Type filter)*")
+        crexi_cat = st.selectbox(
+            "Crexi category",
+            ["(any)"] + list(CREXI_TAXONOMY.keys()),
+            index=0,
+            key="sb_crexi_cat",
+            help="Crexi's top-level Property Type. Sent into the payload's propertyTypes array.",
+        )
+        crexi_subs_available = CREXI_TAXONOMY.get(crexi_cat, []) if crexi_cat != "(any)" else []
+        if crexi_subs_available:
+            crexi_sub = st.selectbox(
+                "Sub-type",
+                ["(any)"] + crexi_subs_available,
+                index=0,
+                key="sb_crexi_sub",
+                help="Crexi's sub-category checkboxes. Concatenated into the search query.",
+            )
+        else:
+            crexi_sub = "(any)"
+            if crexi_cat != "(any)":
+                st.caption(f"_{crexi_cat} has no sub-categories on Crexi._")
         city_or_county_in = st.text_input(
             "City or County (optional)",
             value="",
@@ -1121,6 +1204,8 @@ def render_sidebar() -> dict[str, Any]:
         _state_text = state_code  # Send the 2-letter state code into the search query
         _query_parts = [
             None if asset_class == "(any)" else asset_class,
+            None if crexi_sub == "(any)" else crexi_sub,
+            None if crexi_cat == "(any)" or crexi_sub != "(any)" else crexi_cat,
             city_or_county_in.strip() or None,
             None if lease_type_in == "(any)" else lease_type_in,
             f"${price_min_in:.1f}M-${price_max_in:.1f}M" if (price_min_in or price_max_in) else None,
@@ -1224,6 +1309,8 @@ def render_sidebar() -> dict[str, Any]:
         "actor_label": actor_choice,
         "state_code": state_code,
         "asset_class": None if asset_class == "(any)" else asset_class,
+        "crexi_category": None if crexi_cat == "(any)" else crexi_cat,
+        "crexi_sub_type": None if crexi_sub == "(any)" else crexi_sub,
         "city_or_county": city_or_county_in.strip(),
         "lease_type": None if lease_type_in == "(any)" else lease_type_in,
         "price_min_m": float(price_min_in),
@@ -1311,7 +1398,8 @@ def render_command_center(deal: pd.Series, idx: int, sb: dict) -> None:
     with st.expander(header, expanded=False):
         # Asset-class-specific advisories (Phase 1 env. + 15-yr depreciation).
         asset_label = (sb.get("asset_class") or "").strip()
-        if asset_label in PHASE_1_ENV_ASSET_CLASSES:
+        crexi_sub_label = (sb.get("crexi_sub_type") or "").strip()
+        if asset_label in PHASE_1_ENV_ASSET_CLASSES or crexi_sub_label in CREXI_SUBTYPE_PHASE_1:
             st.warning(
                 "⚠️ **Phase 1 Environmental Audit Required** for Underground Storage Tanks / "
                 "Chemical Runoff. Budget $3K–$8K and 2–4 weeks before closing diligence.",
@@ -1394,8 +1482,17 @@ def render_screener_tab(sb: dict) -> None:
         query = re.sub(r"\s+", " ", re.sub(r"[/]+", " ", raw_query)).strip()
 
         # Build the exact payload we'll send — exposed via st.info on screen
-        # so the user can verify filters before / after the run.
-        property_types_payload = ASSET_CLASS_CATALOG.get(sb["asset_class"], []) if sb["asset_class"] else []
+        # so the user can verify filters before / after the run. Sources:
+        # (1) the strategy preset's ASSET_CLASS_CATALOG mapping,
+        # (2) the Crexi-native category selectbox.
+        _types: list[str] = []
+        if sb["asset_class"]:
+            _types += ASSET_CLASS_CATALOG.get(sb["asset_class"], [])
+        if sb["crexi_category"]:
+            _types.append(sb["crexi_category"])
+        # Dedupe while preserving order.
+        seen: set[str] = set()
+        property_types_payload = [t for t in _types if not (t in seen or seen.add(t))]
         city_county = (sb.get("city_or_county") or "").strip()
         # locations: the actor's native field. Crawlerbros only accepts state
         # codes, so we send the state code first; the city/county string is
