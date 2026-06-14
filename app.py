@@ -42,6 +42,15 @@ except Exception as _exc:
 
 _USE_APIFY_CLIENT = _APIFY_CLIENT_AVAILABLE and os.getenv("APIFY_USE_CLIENT", "0") == "1"
 
+# Anthropic SDK is also optional — if the install fails on Cloud or the user
+# hasn't set ANTHROPIC_API_KEY, the AI Analyst tab degrades gracefully.
+try:
+    from anthropic import Anthropic
+    _ANTHROPIC_AVAILABLE = True
+except Exception as _exc:
+    Anthropic = None  # type: ignore[assignment]
+    _ANTHROPIC_AVAILABLE = False
+
 
 def _to_dict(obj: Any) -> dict[str, Any]:
     """Normalize apify-client v2 Pydantic models (or dicts) into a plain dict.
@@ -90,7 +99,10 @@ def _secret(name: str, default: str = "") -> str:
 
 APIFY_TOKEN = _secret("APIFY_TOKEN")
 APIFY_DATASET_ID = _secret("APIFY_DATASET_ID")
+ANTHROPIC_API_KEY = _secret("ANTHROPIC_API_KEY")
 TOKEN_PLACEHOLDER = "your_apify_token_here"
+ANTHROPIC_MODEL = "claude-sonnet-4-6"
+ANTHROPIC_PLACEHOLDER = "your_anthropic_api_key_here"
 
 DEFAULT_ACTOR_ID = "skootle~crexi-commercial-real-estate-scraper"
 DEFAULT_STATE_CODE = "GA"
@@ -128,62 +140,53 @@ US_STATES: list[str] = [
 
 # Sub-class keyword library (case-insensitive scan over title + description +
 # native subtype tags). Used to add a `Sub-Class` column in the final table.
-# Crexi's native Property Type taxonomy. Top-level keys match Crexi's UI
-# checkboxes exactly. Sub-categories are best-effort from CRE industry
-# standards — verify exact strings against Crexi's checkbox UI; some may
-# differ in wording. Adding the category to `propertyTypes` in the payload
-# matches what their filter API expects.
+# Crexi's native Property Type taxonomy — transcribed from the live UI
+# checkboxes as of 2026-06. Top-level keys and sub-category strings match
+# Crexi exactly so payload `propertyTypes` lines up with the filter API.
 CREXI_TAXONOMY: dict[str, list[str]] = {
     "Retail": [
-        "Strip Center", "Anchored Center", "Free Standing",
-        "Mixed Use Building", "Restaurant/Bar", "Bank",
-        "Drug Store/Pharmacy", "Single Tenant NNN", "Multi-Tenant",
+        "Bank", "Convenience Store", "Day Care/Nursery", "QSR/Fast Food",
+        "Gas Station", "Grocery Store", "Pharmacy/Drug", "Restaurant",
+        "Bar", "Storefront", "Shopping Center", "Auto Shop",
     ],
     "Multifamily": [
-        "Garden Style (Low-Rise)", "Mid-Rise", "High-Rise", "Townhomes",
-        "Student Housing", "Affordable Housing",
-        "Single Family Rental Portfolio",
+        "Student Housing", "Single Family Rental Portfolio",
+        "RV Park", "Apartment Building",
     ],
     "Office": [
-        "Class A", "Class B", "Class C", "Medical Office",
-        "Coworking / Executive Suites",
+        "Traditional Office", "Executive Office", "Medical Office",
+        "Creative Office",
     ],
     "Industrial": [
-        "Warehouse / Distribution", "Flex Space", "R&D",
-        "Manufacturing", "Cold Storage", "Truck Terminal",
+        "Distribution", "Flex", "Warehouse", "R&D",
+        "Manufacturing", "Refrigerated/Cold Storage",
     ],
     "Hospitality": [
-        "Full Service Hotel", "Limited Service Hotel",
-        "Bed & Breakfast", "Motel", "Resort", "Extended Stay",
+        "Hotel", "Motel", "Casino",
     ],
     "Mixed Use": [],
     "Land": [
-        "Commercial Land", "Residential Land",
-        "Industrial Land", "Agricultural Land",
+        "Agricultural", "Residential", "Commercial", "Industrial",
+        "Islands", "Farm", "Ranch", "Timber", "Hunting/Recreational",
     ],
     "Self Storage": [],
     "Mobile Home Park": [],
     "Senior Living": [],
     "Special Purpose": [
-        "Auto Dealer", "Car Wash", "Day Care", "Funeral Home",
-        "Gas Station / Fuel Station", "Marina", "Religious", "Theater",
+        "Telecom/Data Center", "Sports/Entertainment", "Marina",
+        "Golf Course", "School", "Religious/Church", "Garage/Parking",
+        "Car Wash", "Airport",
     ],
     "Note/Loan": [],
-    "Business for Sale": [
-        "Restaurant", "Retail Business", "Service Business",
-        "Manufacturing Business", "Auto Service", "Liquor Store",
-    ],
+    "Business for Sale": [],
 }
 
-# Crexi sub-types that should ALSO trigger the 15-yr accelerated depreciation
-# flag (IRS Class 57.1) and the Phase 1 environmental advisory — keeps the
-# tax-alpha logic working when the user picks the Crexi-native filter.
-CREXI_SUBTYPE_TAX_ALPHA: set[str] = {
-    "Gas Station / Fuel Station", "Car Wash",
-}
-CREXI_SUBTYPE_PHASE_1: set[str] = {
-    "Gas Station / Fuel Station", "Car Wash", "Auto Dealer",
-}
+# Crexi sub-types that trigger the 15-yr accelerated depreciation flag
+# (IRS Class 57.1) and the Phase 1 environmental advisory.
+# Conservative: only definite fuel-canopy + chemical-runoff sub-types tagged
+# tax-alpha. Auto Shop is Phase 1 (used motor oil) but NOT 15-yr eligible.
+CREXI_SUBTYPE_TAX_ALPHA: set[str] = {"Gas Station", "Car Wash"}
+CREXI_SUBTYPE_PHASE_1: set[str] = {"Gas Station", "Car Wash", "Auto Shop"}
 
 SUBCLASS_KEYWORDS: dict[str, list[str]] = {
     "Gas Station": [
@@ -2068,6 +2071,286 @@ def render_analyzer_tab(sb: dict) -> None:
     if pdf_text:
         with st.expander("PDF text preview (first 2000 chars)"):
             st.text(pdf_text[:2000])
+
+
+# ---------- AI Analyst (Claude API) ----------
+
+CRE_ANALYST_SYSTEM_PROMPT = """You are a senior commercial real estate (CRE) \
+investment analyst with 20 years of experience underwriting acquisitions for \
+institutional investors. You think like an institutional buyer:
+
+- Lease structure first, asset second. Tenant credit quality matters more than day-1 yield.
+- Replacement cost is the floor; cap rate is the ceiling. Always ask: would we build this for less?
+- For NNN: who owns the roof, structure, and parking lot? Read the lease before the broker's marketing.
+- For multifamily: in-place rent vs market rent. What's the rent growth runway? What are real OpEx ratios for this asset class in this market?
+- Tax-advantaged sub-classes (gas stations, car washes — IRS Class 57.1, 15-yr accelerated depreciation) need Phase 1 environmental on USTs / chemical runoff.
+- High-margin ancillary revenue (COAM gaming, lottery, unbranded fuel margin, vending) can carry a deal — but verify it's transferable and re-licensable.
+
+When responding:
+1. Lead with the verdict and the single most important reason — no preamble.
+2. Be specific. Cite numbers from the data provided. Don't speculate.
+3. If critical data is missing, say what's missing and how to get it. List it as the first question to ask the broker.
+4. Cite specific OM passages when relevant (e.g. "per OM: 'lease expires 9/30/2040'").
+5. Use markdown: headers, bullet points, **bold** for key terms and numbers.
+
+Never:
+- Hedge with "it depends" without stating the dependency explicitly.
+- Use generic CRE platitudes ("location is important").
+- Make up data not in the OM or context."""
+
+CRE_ACTION_PROMPTS: dict[str, str] = {
+    "summarize": (
+        "Write a tight 200-word executive summary of this deal. Cover: what it is, "
+        "the headline financials, the tenant/lease story, and your one-line take. "
+        "No bullets — flowing prose."
+    ),
+    "risks": (
+        "Identify the **top 5 specific risks** in this deal. For each: name the risk in bold, "
+        "explain it in 1–2 sentences with citation to the data or OM, and rate severity "
+        "(High / Medium / Low). Skip generic risks that apply to all CRE."
+    ),
+    "questions": (
+        "Generate the **top 7 questions** I should ask the listing broker before signing an LOI. "
+        "Order by importance. Each question should be specific to this deal, citing the data or "
+        "OM passage that prompts it. Skip questions whose answers are already in the materials."
+    ),
+    "verdict": (
+        "Give your **Go / No-Go / Conditional Go** verdict on this deal. Lead with the verdict "
+        "in bold. Then give the 3 strongest reasons in bullet form. Then 1–2 sentences on what "
+        "would change your call. Keep total response under 250 words."
+    ),
+    "full": (
+        "Produce a 1-page institutional underwriting memo with these exact sections:\n"
+        "## Verdict (Go / No-Go / Conditional Go, with 1-sentence reason)\n"
+        "## Deal Snapshot (3–5 bullets: address, asset, key financials)\n"
+        "## Lease & Tenant Analysis (4–6 bullets)\n"
+        "## Returns Profile (entry yield, downside, comps)\n"
+        "## Top 5 Risks (ranked)\n"
+        "## Top 5 Broker Questions (ranked)\n"
+        "## Bottom Line (2–3 sentences)"
+    ),
+}
+
+
+def _deal_context_block(ctx: dict[str, Any]) -> str:
+    def _f(key, fmt=str, default="—"):
+        v = ctx.get(key)
+        if v is None or v == "" or (isinstance(v, float) and pd.isna(v)):
+            return default
+        try:
+            return fmt(v)
+        except Exception:
+            return str(v)
+    return (
+        "# Deal Context\n"
+        f"- Address: {_f('address')}\n"
+        f"- Asking Price: ${_f('asking_price', lambda x: f'{float(x):,.0f}')}\n"
+        f"- Cap Rate: {_f('cap_rate_pct', lambda x: f'{float(x):.2f}%')}\n"
+        f"- Square Footage: {_f('square_footage', lambda x: f'{int(x):,}')}\n"
+        f"- Asset Class: {_f('property_type')}\n"
+        f"- Sub-Class: {_f('sub_class')}\n"
+        f"- Listing URL: {_f('listing_url')}\n"
+        f"- Verdict (heuristic): {_f('verdict')}\n"
+        f"- IRS 15-yr eligible: {_f('15_Yr_Accelerated_Depreciation')}\n"
+        f"- Ancillary flags: {_f('flags', lambda x: ', '.join(x) if x else '—')}\n"
+    )
+
+
+def stream_claude_analysis(action: str, deal_ctx: dict[str, Any], om_text: str):
+    """Stream Claude's response for the chosen action.
+
+    Uses prompt caching on the system prompt AND the OM text — so successive
+    actions on the same deal hit cache and cost ~1/10 the first request.
+    Yields text chunks suitable for st.write_stream.
+    """
+    if not _ANTHROPIC_AVAILABLE or Anthropic is None:
+        raise RuntimeError("anthropic package not installed")
+    if not ANTHROPIC_API_KEY or ANTHROPIC_API_KEY == ANTHROPIC_PLACEHOLDER:
+        raise RuntimeError("ANTHROPIC_API_KEY not configured (.env or st.secrets)")
+
+    client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    action_prompt = CRE_ACTION_PROMPTS.get(action, "Analyze this deal.")
+    context_block = _deal_context_block(deal_ctx)
+
+    user_content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": context_block,
+        },
+    ]
+    if om_text and om_text.strip():
+        # Truncate aggressively-long OMs; Sonnet has plenty of context but we
+        # want to keep the first action snappy.
+        clipped = om_text[:80_000]
+        user_content.append({
+            "type": "text",
+            "text": f"\n\n# Offering Memorandum (extracted text)\n\n{clipped}",
+            "cache_control": {"type": "ephemeral"},
+        })
+    user_content.append({
+        "type": "text",
+        "text": f"\n\n# Task\n\n{action_prompt}",
+    })
+
+    with client.messages.stream(
+        model=ANTHROPIC_MODEL,
+        max_tokens=4096,
+        system=[
+            {
+                "type": "text",
+                "text": CRE_ANALYST_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            },
+        ],
+        messages=[{"role": "user", "content": user_content}],
+    ) as stream:
+        for text in stream.text_stream:
+            yield text
+
+
+def _has_anthropic_key() -> bool:
+    return bool(ANTHROPIC_API_KEY) and ANTHROPIC_API_KEY != ANTHROPIC_PLACEHOLDER
+
+
+def render_ai_analyst_tab(sb: dict) -> None:
+    st.subheader("🤖 AI Analyst — Claude underwrites the deal")
+    st.caption(
+        f"Powered by **{ANTHROPIC_MODEL}** with prompt caching. "
+        f"~$0.05–0.15 for the first action on a new OM; ~$0.01–0.03 for each "
+        f"follow-up action on the same OM (cache hit)."
+    )
+
+    if not _ANTHROPIC_AVAILABLE:
+        st.error(
+            "`anthropic` SDK not installed in this environment. Locally: "
+            "`pip install anthropic`. On Streamlit Cloud, it'll install on the "
+            "next rebuild after requirements.txt is updated."
+        )
+        return
+    if not _has_anthropic_key():
+        st.warning(
+            "**ANTHROPIC_API_KEY is not set.**\n\n"
+            "- **Locally:** add `ANTHROPIC_API_KEY=sk-ant-...` to `.env`\n"
+            "- **Streamlit Cloud:** Settings → Secrets → add "
+            "`ANTHROPIC_API_KEY = \"sk-ant-...\"`\n\n"
+            "Get a key at [console.anthropic.com](https://console.anthropic.com/account/keys)."
+        )
+        return
+
+    # ---------- Source picker ----------
+    src_tabs = st.tabs([
+        "📋 From Screener",
+        "📄 Upload OM PDF",
+        "✏️ Paste OM Text",
+    ])
+    deal_ctx: dict[str, Any] = {}
+    om_text = ""
+
+    with src_tabs[0]:
+        rows = st.session_state.get("deals_rows") or []
+        if not rows:
+            st.info("No deals loaded in the Screener yet. Fetch some first.")
+        else:
+            df = normalize_rows(rows)
+            df = analyze_and_score(df, sb)
+            if df.empty:
+                st.info("Loaded deals didn't pass the GA filter.")
+            else:
+                options: dict[str, int] = {
+                    f"{i+1}. {row['address']} — ${row['asking_price']:,.0f}"
+                    if pd.notna(row.get("asking_price")) else
+                    f"{i+1}. {row['address']}"
+                    : i
+                    for i, row in df.iterrows()
+                }
+                choice = st.selectbox("Pick a deal", list(options.keys()), key="analyst_pick")
+                idx = options[choice]
+                deal_ctx = df.iloc[idx].to_dict()
+                cols = st.columns(4)
+                cols[0].metric("Asking Price", f"${deal_ctx.get('asking_price', 0):,.0f}" if pd.notna(deal_ctx.get("asking_price")) else "—")
+                cols[1].metric("Cap Rate", f"{deal_ctx.get('cap_rate_pct', 0):.2f}%" if pd.notna(deal_ctx.get("cap_rate_pct")) else "—")
+                cols[2].metric("SF", f"{int(deal_ctx.get('square_footage', 0)):,}" if pd.notna(deal_ctx.get("square_footage")) else "—")
+                cols[3].metric("Verdict", deal_ctx.get("verdict", "—"))
+
+    with src_tabs[1]:
+        if PdfReader is None:
+            st.warning("`pypdf` not installed — PDF upload unavailable.")
+        else:
+            pdf_file = st.file_uploader(
+                "Upload an Offering Memorandum (PDF)",
+                type=["pdf"], key="analyst_pdf",
+            )
+            if pdf_file is not None:
+                om_text = extract_pdf_text(pdf_file.getvalue())
+                if om_text:
+                    st.success(f"Extracted {len(om_text):,} characters from PDF.")
+                    with st.expander("PDF text preview (first 2000 chars)"):
+                        st.text(om_text[:2000])
+                    parsed = parse_om_fields(om_text)
+                    if parsed:
+                        st.caption(f"Auto-parsed: {', '.join(f'{k}={v}' for k, v in parsed.items())}")
+                        deal_ctx.setdefault("asking_price", parsed.get("price"))
+                        deal_ctx.setdefault("cap_rate_pct", parsed.get("cap_rate"))
+                        deal_ctx.setdefault("square_footage", parsed.get("sf"))
+                else:
+                    st.warning("Couldn't extract text — the PDF may be image-only (scanned).")
+
+    with src_tabs[2]:
+        manual_addr = st.text_input("Property address / nickname", key="analyst_addr_manual")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            manual_price = st.number_input("Asking Price ($)", min_value=0.0, value=0.0, step=50_000.0, key="analyst_price_manual")
+        with c2:
+            manual_cap = st.number_input("Cap Rate (%)", min_value=0.0, max_value=25.0, value=0.0, step=0.05, key="analyst_cap_manual")
+        with c3:
+            manual_sf = st.number_input("Square Footage", min_value=0, value=0, step=500, key="analyst_sf_manual")
+        pasted = st.text_area("Paste OM text here", height=240, key="analyst_paste")
+        if pasted.strip():
+            om_text = pasted
+            deal_ctx = {
+                "address": manual_addr,
+                "asking_price": manual_price or None,
+                "cap_rate_pct": manual_cap or None,
+                "square_footage": manual_sf or None,
+                "property_type": "",
+            }
+
+    # ---------- Action buttons ----------
+    if not deal_ctx and not om_text:
+        st.info("👆 Pick a source above to enable analysis.")
+        return
+
+    st.divider()
+    st.markdown("**Choose an analysis. Output streams below in real time.**")
+    bc = st.columns(5)
+    triggered_action: str | None = None
+    if bc[0].button("📝 Summarize", use_container_width=True, key="ai_sum"):
+        triggered_action = "summarize"
+    if bc[1].button("⚠️ Top 5 Risks", use_container_width=True, key="ai_risk"):
+        triggered_action = "risks"
+    if bc[2].button("❓ Broker Q's", use_container_width=True, key="ai_qs"):
+        triggered_action = "questions"
+    if bc[3].button("✅ Go / No-Go", use_container_width=True, key="ai_v"):
+        triggered_action = "verdict"
+    if bc[4].button("📊 Full Memo", use_container_width=True, type="primary", key="ai_full"):
+        triggered_action = "full"
+
+    if triggered_action:
+        st.divider()
+        st.markdown(f"### Claude — {triggered_action.replace('_',' ').title()}")
+        try:
+            output = st.write_stream(stream_claude_analysis(triggered_action, deal_ctx, om_text))
+        except Exception as exc:
+            st.error(f"Analysis failed: {exc}")
+            return
+        # Offer the result as a download / copy.
+        st.download_button(
+            "💾 Download analysis (.md)",
+            data=output if isinstance(output, str) else "".join(output),
+            file_name=f"claude_{triggered_action}_{_slugify(str(deal_ctx.get('address','deal')))}.md",
+            mime="text/markdown",
+            use_container_width=False,
+        )
 
 
 # ---------- Main ----------

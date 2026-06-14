@@ -11,7 +11,12 @@ st.markdown("---")
 
 # Apify-driven Deal Screener + Single-Deal Analyzer (render functions imported
 # from app.py — keeps their implementation in one place, reusable standalone).
-from app import render_sidebar, render_screener_tab, render_analyzer_tab
+from app import (
+    render_sidebar,
+    render_screener_tab,
+    render_analyzer_tab,
+    render_ai_analyst_tab,
+)
 
 # 1. Create the Tabs
 (
@@ -23,6 +28,7 @@ from app import render_sidebar, render_screener_tab, render_analyzer_tab
     tab_Leverage_Pro_forma,
     tab_deal_screener,
     tab_analyzer,
+    tab_ai_analyst,
 ) = st.tabs([
     "🔍 Universal TVM",
     "⚙️ Wealth Accumulation",
@@ -32,6 +38,7 @@ from app import render_sidebar, render_screener_tab, render_analyzer_tab
     "🏢 Leveraged Pro Forma",
     "🌐 Deal Screener",
     "🔬 Deal Analyzer",
+    "🤖 AI Analyst",
 ])
 
 # Initialize Apify-tab session state and render the (global) sidebar once.
@@ -1384,3 +1391,9 @@ with tab_deal_screener:
 # ==========================================
 with tab_analyzer:
     render_analyzer_tab(_sidebar_state)
+
+# ==========================================
+# TAB 9: AI ANALYST (Claude Sonnet 4.6 with prompt caching)
+# ==========================================
+with tab_ai_analyst:
+    render_ai_analyst_tab(_sidebar_state)

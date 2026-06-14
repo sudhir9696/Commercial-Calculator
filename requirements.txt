@@ -6,3 +6,4 @@ openpyxl
 requests
 pypdf
 apify-client
+anthropic
