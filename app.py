@@ -60,10 +60,59 @@ DEFAULT_MAX_PRICE = 5_000_000
 DEFAULT_MAX_PROPERTIES = 10
 DEFAULT_RUN_TIMEOUT_SECS = 900
 LAST_FETCH_PATH = Path(".streamlit/cache/last_fetch.json")
-# Skootle's `assetClass` input is a single enum value — pick one per run, or leave None.
-PROPERTY_TYPES = [
-    "Multifamily", "Retail", "Industrial", "Office", "Land", "Hospitality", "Mixed-Use",
-]
+
+# UI asset-class label → Crexi propertyTypes array.
+# Skootle's actor doesn't currently expose a propertyTypes filter, so the array is
+# also future-proofing; the user-friendly label is concatenated into searchKeywords
+# (which Crexi's search DOES parse) for real filtering today.
+ASSET_CLASS_CATALOG: dict[str, list[str]] = {
+    "Industrial Flex": ["Industrial"],
+    "Value-Add Multifamily": ["Multifamily"],
+    "Retail Motor Fuels Outlet (Gas Station)": ["Retail", "Specialty"],
+    "Express Car Wash": ["Retail", "Specialty"],
+    "Laundromat / Retail Strip": ["Retail"],
+    "Quick-Lube / Automotive Service": ["Retail", "Specialty"],
+    "Self-Storage Facility": ["Specialty", "Industrial"],
+}
+
+# Ancillary-revenue and distress keywords scanned case-insensitively in each
+# listing's description (and title as fallback). Grouped here only for docs;
+# every term contributes to the per-deal `flags` list.
+ANCILLARY_KEYWORDS: dict[str, list[str]] = {
+    "Gas Stations / Laundromats": [
+        "COAM", "lottery", "unbranded", "gaming", "vending", "card-operated",
+    ],
+    "Car Washes / Automotive": [
+        "bay", "tunnel", "automated", "equipment package", "replacement cost",
+    ],
+    "Self-Storage": [
+        "climate controlled", "expansion potential", "non-paying tenants", "occupancy upside",
+    ],
+}
+ALL_ANCILLARY_KEYWORDS: list[str] = sorted({k for kws in ANCILLARY_KEYWORDS.values() for k in kws})
+
+# The subset of ancillary terms that, when present, elevate the verdict to
+# 🟢 GO (High-Tax-Alpha Asset) — i.e. high-margin secondary revenue or upside
+# strong enough to override the cap/price screen.
+HIGH_MARGIN_TRIGGERS = {
+    "COAM", "lottery", "unbranded", "gaming",
+    "expansion potential", "occupancy upside",
+}
+
+# IRS Class 57.1 — qualifies for 15-year accelerated depreciation
+# (vs. the 39-year default for non-residential real property).
+TAX_ALPHA_ASSET_CLASSES = {
+    "Retail Motor Fuels Outlet (Gas Station)",
+    "Express Car Wash",
+}
+
+# Asset classes that require a Phase 1 environmental audit (USTs for fuel,
+# chemical runoff for car wash, used motor oil for quick-lube).
+PHASE_1_ENV_ASSET_CLASSES = {
+    "Retail Motor Fuels Outlet (Gas Station)",
+    "Express Car Wash",
+    "Quick-Lube / Automotive Service",
+}
 
 # CCIM-style underwriting defaults — matches the conventions used in tvm.py.
 DEFAULT_HOLD_YEARS = 5
@@ -81,6 +130,7 @@ SAMPLE_DEALS: list[dict[str, Any]] = [
         "documents": [{"name": "Offering Memorandum", "url": "https://example.com/oms/1421-peachtree.pdf"}],
         "property_url": "https://www.crexi.com/example/1421-peachtree",
         "property_type": "Retail",
+        "description": "Anchored retail strip in Buckhead with credit national tenants.",
     },
     {
         "address": "88 Industrial Pkwy", "city": "Savannah", "state": "GA", "zip_code": "31405",
@@ -88,20 +138,48 @@ SAMPLE_DEALS: list[dict[str, Any]] = [
         "documents": ["https://example.com/oms/88-industrial.pdf"],
         "property_url": "https://www.crexi.com/example/88-industrial-savannah",
         "property_type": "Industrial",
+        "description": "Flex industrial near the port. Long-term single-tenant lease.",
     },
     {
-        "address": "2200 Cherry St", "city": "Macon", "state": "GA", "zip_code": "31201",
-        "price": "$6,750,000", "cap_rate": "6.1%", "square_footage": 25_300,
+        "address": "775 Buford Hwy (Unbranded Gas + C-Store)", "city": "Cumming", "state": "GA", "zip_code": "30041",
+        "price": "$3,250,000", "cap_rate": "8.1%", "square_footage": 4_200,
         "documents": [],
-        "property_url": "https://www.crexi.com/example/2200-cherry-macon",
-        "property_type": "Office",
+        "property_url": "https://www.crexi.com/example/775-buford-gas",
+        "property_type": "Specialty",
+        "description": (
+            "Unbranded fuel station with 6 MPDs, attached C-store, COAM gaming machines and "
+            "lottery sales. Strong vending revenue. Phase 1 environmental on file."
+        ),
     },
     {
-        "address": "5 Broad St", "city": "Augusta", "state": "GA", "zip_code": "30901",
+        "address": "4100 Express Wash Tunnel", "city": "Roswell", "state": "GA", "zip_code": "30075",
+        "price": "$5,200,000", "cap_rate": "9.0%", "square_footage": 6_800,
+        "documents": [],
+        "property_url": "https://www.crexi.com/example/4100-express-wash",
+        "property_type": "Specialty",
+        "description": (
+            "Express tunnel wash with full automated equipment package. 130 ft conveyor tunnel, "
+            "vacuum bay, 5 prep bays. Replacement cost well above asking price."
+        ),
+    },
+    {
+        "address": "1900 Self-Storage Way", "city": "Macon", "state": "GA", "zip_code": "31204",
+        "price": "$6,750,000", "cap_rate": "6.4%", "square_footage": 55_300,
+        "documents": [],
+        "property_url": "https://www.crexi.com/example/1900-self-storage-macon",
+        "property_type": "Self Storage",
+        "description": (
+            "Climate controlled self-storage facility with expansion potential on 2 adjacent "
+            "parcels. ~30% occupancy upside; current rent roll has 7 non-paying tenants."
+        ),
+    },
+    {
+        "address": "5 Broad St (Quick-Lube)", "city": "Augusta", "state": "GA", "zip_code": "30901",
         "price": "$1,950,000", "cap_rate": "9.2%", "square_footage": 11_400,
         "documents": [],
         "property_url": "https://www.crexi.com/example/5-broad-augusta",
-        "property_type": "Mixed Use",
+        "property_type": "Specialty",
+        "description": "Quick-lube + auto service. 4 bay drive-through. Long-term operator.",
     },
 ]
 
@@ -233,6 +311,7 @@ def normalize_rows(rows: list[dict], *, georgia_only: bool = True) -> pd.DataFra
             "square_footage": _coerce_int(_first_present(r, ("squareFootageNum", "squareFootage", "buildingSqft", "square_footage", "squareFeet", "buildingSize", "sf", "size"))),
             "om_url": _extract_om_url(r),
             "listing_url": _first_present(r, ("listingUrl", "url", "property_url", "listing_url", "detailPageUrl")) or "",
+            "description": _first_present(r, ("description", "agentMarkdown", "highlights")) or "",
         })
     return pd.DataFrame(canonical)
 
@@ -294,6 +373,7 @@ def _build_actor_payload(
     search_keywords: list[str] | None,
     start_urls: list[str] | None,
     property_urls: list[str] | None,
+    property_types: list[str] | None,
     max_items: int,
     max_search_pages: int,
 ) -> dict[str, Any]:
@@ -308,6 +388,11 @@ def _build_actor_payload(
         payload["startUrls"] = [{"url": u} for u in start_urls]
     if property_urls:
         payload["propertyUrls"] = property_urls
+    if property_types:
+        # Skootle's current schema ignores propertyTypes — we send it anyway so
+        # the asset-class catalog mapping is exercised end-to-end and any future
+        # actor build that does honor it will pick it up automatically.
+        payload["propertyTypes"] = property_types
     return payload
 
 
@@ -348,6 +433,7 @@ def run_actor_async(
     search_keywords: list[str] | None = None,
     start_urls: list[str] | None = None,
     property_urls: list[str] | None = None,
+    property_types: list[str] | None = None,
     max_items: int = 10,
     max_search_pages: int = 5,
     timeout_secs: int = DEFAULT_RUN_TIMEOUT_SECS,
@@ -361,6 +447,7 @@ def run_actor_async(
     """
     payload = _build_actor_payload(
         search_keywords=search_keywords, start_urls=start_urls, property_urls=property_urls,
+        property_types=property_types,
         max_items=max_items, max_search_pages=max_search_pages,
     )
     run_id = start_actor_run(token, actor_id, payload)
@@ -401,6 +488,7 @@ def run_actor_sync(
     search_keywords: list[str] | None = None,
     start_urls: list[str] | None = None,
     property_urls: list[str] | None = None,
+    property_types: list[str] | None = None,
     max_items: int = 10,
     max_search_pages: int = 5,
     timeout_secs: int = 600,
@@ -410,6 +498,7 @@ def run_actor_sync(
     """
     payload = _build_actor_payload(
         search_keywords=search_keywords, start_urls=start_urls, property_urls=property_urls,
+        property_types=property_types,
         max_items=max_items, max_search_pages=max_search_pages,
     )
     url = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items"
@@ -426,16 +515,59 @@ def run_actor_sync(
 
 # ---------- Flagging ----------
 
-def flag_action_required(df: pd.DataFrame, min_cap: float, max_price: float) -> pd.DataFrame:
+VERDICT_GO = "🟢 GO (High-Tax-Alpha Asset)"
+VERDICT_ACTION = "🟢 Action Required"
+VERDICT_REVIEW = "⚪ Review"
+
+
+def _scan_description_for_flags(text: Any) -> list[str]:
+    if not isinstance(text, str) or not text:
+        return []
+    low = text.lower()
+    return [kw for kw in ALL_ANCILLARY_KEYWORDS if kw.lower() in low]
+
+
+def analyze_and_score(df: pd.DataFrame, sb: dict[str, Any]) -> pd.DataFrame:
+    """CCIM-style scoring: keyword flags + 15-yr depreciation tag + verdict cascade.
+
+    Verdict cascade (last winner takes the row):
+      1. ⚪ Review  ← default
+      2. 🟢 Action Required  ← cap >= min_cap AND price <= max_price_rule
+      3. 🟢 GO (High-Tax-Alpha Asset)  ← either condition:
+         - sidebar asset class qualifies for IRS Class 57.1 (15-yr accel.
+           depreciation) AND the listing has a real price, OR
+         - the listing's description contains any HIGH_MARGIN_TRIGGER
+           keyword (COAM, lottery, unbranded, gaming, expansion potential,
+           occupancy upside) — signals disproportionate ancillary upside.
+    """
     df = df.copy()
-    df["status"] = "⚪ Review"
     if df.empty:
+        df["flags"] = pd.Series([], dtype=object)
+        df["15_Yr_Accelerated_Depreciation"] = pd.Series([], dtype=bool)
+        df["verdict"] = pd.Series([], dtype=str)
         return df
-    mask = (
-        df["cap_rate_pct"].fillna(-1).ge(min_cap)
-        & df["asking_price"].fillna(float("inf")).le(max_price)
-    )
-    df.loc[mask, "status"] = "🟢 Action Required"
+
+    desc_col = df["description"] if "description" in df.columns else df["address"].fillna("")
+    title_col = df.get("title", pd.Series([""] * len(df)))
+    combined_text = desc_col.fillna("") + " " + title_col.fillna("")
+    df["flags"] = combined_text.apply(_scan_description_for_flags)
+
+    asset_label = (sb.get("asset_class") or "").strip()
+    is_tax_alpha_class = asset_label in TAX_ALPHA_ASSET_CLASSES
+    df["15_Yr_Accelerated_Depreciation"] = bool(is_tax_alpha_class)
+
+    df["verdict"] = VERDICT_REVIEW
+
+    cap_ok = df["cap_rate_pct"].fillna(-1).ge(sb["min_cap"])
+    price_ok = df["asking_price"].fillna(float("inf")).le(sb["max_price_rule"])
+    df.loc[cap_ok & price_ok, "verdict"] = VERDICT_ACTION
+
+    has_price = df["asking_price"].notna() & df["asking_price"].gt(0)
+    has_high_margin = df["flags"].apply(lambda fs: bool(set(fs) & HIGH_MARGIN_TRIGGERS))
+    if is_tax_alpha_class:
+        df.loc[has_price, "verdict"] = VERDICT_GO
+    df.loc[has_high_margin, "verdict"] = VERDICT_GO
+
     return df
 
 
@@ -791,8 +923,14 @@ def render_sidebar() -> dict[str, Any]:
         st.caption(f"Actor: `{DEFAULT_ACTOR_ID}`  ·  Locked to state **{DEFAULT_STATE_CODE}**")
 
         asset_class = st.selectbox(
-            "Asset class hint", ["(any)"] + PROPERTY_TYPES, index=0,
-            help="Baked into the Crexi search query. Skootle doesn't expose a direct asset-class filter.",
+            "Asset class",
+            ["(any)"] + list(ASSET_CLASS_CATALOG.keys()),
+            index=0,
+            help=(
+                "User-friendly label drives the Crexi search query (free-text) and is mapped to "
+                "Crexi `propertyTypes` in the actor payload. Picking 'Gas Station' or 'Express "
+                "Car Wash' also unlocks the IRS Class 57.1 15-year-depreciation tag."
+            ),
             key="sb_asset_class",
         )
         city_or_county_in = st.text_input(
@@ -973,9 +1111,35 @@ def _render_investment_block(inv: dict) -> None:
 def render_command_center(deal: pd.Series, idx: int, sb: dict) -> None:
     price_txt = f"${deal['asking_price']:,.0f}" if pd.notna(deal["asking_price"]) else "—"
     cap_txt = f"{deal['cap_rate_pct']:.2f}% cap" if pd.notna(deal["cap_rate_pct"]) else "no cap"
-    header = f"🟢 {deal['address']}  ·  {price_txt}  ·  {cap_txt}"
+    verdict_txt = deal.get("verdict") or VERDICT_REVIEW
+    header = f"{verdict_txt}  ·  {deal['address']}  ·  {price_txt}  ·  {cap_txt}"
 
     with st.expander(header, expanded=False):
+        # Asset-class-specific advisories (Phase 1 env. + 15-yr depreciation).
+        asset_label = (sb.get("asset_class") or "").strip()
+        if asset_label in PHASE_1_ENV_ASSET_CLASSES:
+            st.warning(
+                "⚠️ **Phase 1 Environmental Audit Required** for Underground Storage Tanks / "
+                "Chemical Runoff. Budget $3K–$8K and 2–4 weeks before closing diligence.",
+                icon="⚠️",
+            )
+        if bool(deal.get("15_Yr_Accelerated_Depreciation")):
+            st.info(
+                "⚡ **IRS Class 57.1 — 15-year accelerated depreciation.** Drives a much higher "
+                "after-tax IRR than the 39-year default; coordinate cost-segregation with your CPA.",
+                icon="⚡",
+            )
+        deal_flags = list(deal.get("flags") or [])
+        if deal_flags:
+            high_margin = [f for f in deal_flags if f in HIGH_MARGIN_TRIGGERS]
+            other = [f for f in deal_flags if f not in HIGH_MARGIN_TRIGGERS]
+            line = "🚩 **Ancillary signals:** "
+            if high_margin:
+                line += "**" + ", ".join(high_margin) + "** (high-margin)"
+            if other:
+                line += ("  ·  " if high_margin else "") + ", ".join(other)
+            st.markdown(line)
+
         left, right = st.columns([3, 2])
         with left:
             st.text_input("Property address", value=deal["address"], key=f"addr_{idx}", disabled=True)
@@ -1039,10 +1203,12 @@ def render_screener_tab(sb: dict) -> None:
                 def _on_progress(elapsed: int, run_status: str, items: int) -> None:
                     status.update(label=f"{run_status} · {elapsed}s elapsed · {items} items collected")
 
+                property_types_payload = ASSET_CLASS_CATALOG.get(sb["asset_class"], []) if sb["asset_class"] else []
                 rows, run_meta = run_actor_async(
                     APIFY_TOKEN,
                     DEFAULT_ACTOR_ID,
                     search_keywords=[query],
+                    property_types=property_types_payload or None,
                     max_items=sb["max_props"],
                     progress_cb=_on_progress,
                 )
@@ -1090,7 +1256,7 @@ def render_screener_tab(sb: dict) -> None:
         using_sample = True
 
     df = normalize_rows(rows)
-    df = flag_action_required(df, sb["min_cap"], sb["max_price_rule"])
+    df = analyze_and_score(df, sb)
 
     if using_sample:
         st.warning(
@@ -1112,12 +1278,15 @@ def render_screener_tab(sb: dict) -> None:
         st.success(f"🟢 Live data: {st.session_state['data_source']}", icon="✅")
 
     # ----- Top metrics -----
-    action_count = int((df["status"] == "🟢 Action Required").sum()) if not df.empty else 0
-    m1, m2, m3, m4 = st.columns(4)
+    go_count = int((df["verdict"] == VERDICT_GO).sum()) if not df.empty else 0
+    action_count = int((df["verdict"] == VERDICT_ACTION).sum()) if not df.empty else 0
+    tax_alpha_count = int(df["15_Yr_Accelerated_Depreciation"].sum()) if "15_Yr_Accelerated_Depreciation" in df.columns else 0
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Total deals", len(df))
-    m2.metric("🟢 Action Required", action_count)
-    m3.metric("Avg cap rate", f"{df['cap_rate_pct'].mean():.2f}%" if not df.empty and df["cap_rate_pct"].notna().any() else "—")
-    m4.metric("Avg asking price", f"${df['asking_price'].mean():,.0f}" if not df.empty and df["asking_price"].notna().any() else "—")
+    m2.metric("🟢 GO (Tax-Alpha)", go_count)
+    m3.metric("🟢 Action Required", action_count)
+    m4.metric("⚡ 15-yr eligible", tax_alpha_count)
+    m5.metric("Avg cap rate", f"{df['cap_rate_pct'].mean():.2f}%" if not df.empty and df["cap_rate_pct"].notna().any() else "—")
 
     # ----- Live filters (apply to the table below) -----
     with st.container(border=True):
@@ -1129,9 +1298,11 @@ def render_screener_tab(sb: dict) -> None:
                 "Asset type", types_available, default=[], key="scr_type_filter",
                 placeholder="(all types)",
             )
-            status_filter = st.multiselect(
-                "Status", ["🟢 Action Required", "⚪ Review"], default=[], key="scr_status_filter",
-                placeholder="(all statuses)",
+            verdict_filter = st.multiselect(
+                "Verdict",
+                [VERDICT_GO, VERDICT_ACTION, VERDICT_REVIEW],
+                default=[], key="scr_status_filter",
+                placeholder="(all verdicts)",
             )
         with f2:
             prices = df["asking_price"].dropna()
@@ -1160,8 +1331,8 @@ def render_screener_tab(sb: dict) -> None:
     fdf = df.copy()
     if type_filter:
         fdf = fdf[fdf["property_type"].isin(type_filter)]
-    if status_filter:
-        fdf = fdf[fdf["status"].isin(status_filter)]
+    if verdict_filter:
+        fdf = fdf[fdf["verdict"].isin(verdict_filter)]
     if price_range:
         fdf = fdf[fdf["asking_price"].fillna(-1).between(price_range[0], price_range[1])]
     if cap_range:
@@ -1169,8 +1340,15 @@ def render_screener_tab(sb: dict) -> None:
     fdf = fdf.reset_index(drop=True)
 
     st.subheader(f"All deals · {len(fdf)} after filter")
+    # Reorder columns so the verdict / tax-alpha / flags signals show first.
+    display_cols = [c for c in [
+        "address", "property_type", "asking_price", "cap_rate_pct", "square_footage",
+        "verdict", "15_Yr_Accelerated_Depreciation", "flags",
+        "om_url", "listing_url",
+    ] if c in fdf.columns]
+    display_df = fdf[display_cols] if display_cols else fdf
     event = st.dataframe(
-        fdf,
+        display_df,
         use_container_width=True, hide_index=True,
         on_select="rerun", selection_mode="single-row",
         key="scr_table",
@@ -1180,8 +1358,13 @@ def render_screener_tab(sb: dict) -> None:
             "square_footage": st.column_config.NumberColumn("SF", format="%,d"),
             "om_url": st.column_config.LinkColumn("OM"),
             "listing_url": st.column_config.LinkColumn("Listing"),
-            "status": st.column_config.TextColumn("Status"),
+            "verdict": st.column_config.TextColumn("Verdict"),
             "property_type": st.column_config.TextColumn("Type"),
+            "15_Yr_Accelerated_Depreciation": st.column_config.CheckboxColumn(
+                "⚡ 15-yr", help="IRS Class 57.1 — qualifies for 15-year accelerated depreciation",
+                disabled=True,
+            ),
+            "flags": st.column_config.ListColumn("🚩 Ancillary flags", width="medium"),
         },
     )
 
@@ -1190,7 +1373,33 @@ def render_screener_tab(sb: dict) -> None:
     if selected_rows and not fdf.empty:
         sel = fdf.iloc[selected_rows[0]]
         with st.container(border=True):
-            st.subheader(f"🔍 Selected: {sel['address']}")
+            verdict_txt = sel.get("verdict") or VERDICT_REVIEW
+            st.subheader(f"🔍 Selected: {sel['address']}  ·  {verdict_txt}")
+
+            asset_label = (sb.get("asset_class") or "").strip()
+            if asset_label in PHASE_1_ENV_ASSET_CLASSES:
+                st.warning(
+                    "⚠️ **Phase 1 Environmental Audit Required** for Underground Storage Tanks / "
+                    "Chemical Runoff. Budget $3K–$8K and 2–4 weeks before closing diligence.",
+                    icon="⚠️",
+                )
+            if bool(sel.get("15_Yr_Accelerated_Depreciation")):
+                st.info(
+                    "⚡ **IRS Class 57.1 — 15-year accelerated depreciation.** Drives a much higher "
+                    "after-tax IRR than the 39-year default; coordinate cost-segregation with your CPA.",
+                    icon="⚡",
+                )
+            sel_flags = list(sel.get("flags") or [])
+            if sel_flags:
+                hi = [f for f in sel_flags if f in HIGH_MARGIN_TRIGGERS]
+                lo = [f for f in sel_flags if f not in HIGH_MARGIN_TRIGGERS]
+                msg = "🚩 **Ancillary signals:** "
+                if hi:
+                    msg += "**" + ", ".join(hi) + "** (high-margin)"
+                if lo:
+                    msg += ("  ·  " if hi else "") + ", ".join(lo)
+                st.markdown(msg)
+
             head = st.columns(4)
             head[0].metric("Asking Price", f"${sel['asking_price']:,.0f}" if pd.notna(sel["asking_price"]) else "—")
             head[1].metric("Cap Rate", f"{sel['cap_rate_pct']:.2f}%" if pd.notna(sel["cap_rate_pct"]) else "—")
@@ -1234,7 +1443,7 @@ def render_screener_tab(sb: dict) -> None:
                 .encode(
                     x=alt.X("asking_price:Q", title="Asking Price ($)", axis=alt.Axis(format="$,.0f")),
                     y=alt.Y("cap_rate_pct:Q", title="Cap Rate (%)", scale=alt.Scale(zero=False)),
-                    color=alt.Color("status:N", legend=alt.Legend(title="Status")),
+                    color=alt.Color("verdict:N", legend=alt.Legend(title="Verdict")),
                     size=alt.Size("sf_for_size:Q", title="SF", scale=alt.Scale(range=[80, 600]), legend=None),
                     tooltip=[
                         alt.Tooltip("address:N", title="Address"),
@@ -1242,7 +1451,7 @@ def render_screener_tab(sb: dict) -> None:
                         alt.Tooltip("asking_price:Q", title="Price", format="$,.0f"),
                         alt.Tooltip("cap_rate_pct:Q", title="Cap %", format=".2f"),
                         alt.Tooltip("square_footage:Q", title="SF", format=",.0f"),
-                        alt.Tooltip("status:N", title="Status"),
+                        alt.Tooltip("verdict:N", title="Verdict"),
                     ],
                 )
                 .properties(height=320)
@@ -1251,13 +1460,13 @@ def render_screener_tab(sb: dict) -> None:
             st.altair_chart(chart, use_container_width=True)
 
     # ----- Action Required Command Center (kept as an alternative drill-in) -----
-    action_df = fdf[fdf["status"] == "🟢 Action Required"].reset_index(drop=True)
+    action_df = fdf[fdf["verdict"].isin([VERDICT_GO, VERDICT_ACTION])].reset_index(drop=True)
     with st.expander(
-        f"🟢 Action Required — Due Diligence Command Center ({len(action_df)} deals)",
+        f"🟢 Due Diligence Command Center — GO + Action Required ({len(action_df)} deals)",
         expanded=False,
     ):
         if action_df.empty:
-            st.info("No deals match the current Action-Required rule + filters.")
+            st.info("No deals carry a GO / Action Required verdict under the current filters.")
         else:
             for i, deal in action_df.iterrows():
                 render_command_center(deal, i, sb)
