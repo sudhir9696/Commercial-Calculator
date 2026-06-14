@@ -26,17 +26,44 @@ import requests
 import streamlit as st
 from dotenv import load_dotenv
 
-# Optional apify-client. We prefer it when available; on Streamlit Cloud
-# (Python 3.14) the install can fail because some transitive deps don't yet
-# ship 3.14 wheels. Fall back to raw REST so the app still runs.
+# Optional apify-client. The library's v2 release switched return values from
+# dicts to Pydantic models, which broke our `["id"]` access. We default to raw
+# REST (most reliable across Cloud Python versions and v1/v2 client behavior)
+# and let users opt in to apify-client via APIFY_USE_CLIENT=1 once they've
+# verified it works in their env.
 try:
     from apify_client import ApifyClient
-    _USE_APIFY_CLIENT = True
+    _APIFY_CLIENT_AVAILABLE = True
     _APIFY_CLIENT_IMPORT_ERROR: str | None = None
 except Exception as _exc:
     ApifyClient = None  # type: ignore[assignment]
-    _USE_APIFY_CLIENT = False
+    _APIFY_CLIENT_AVAILABLE = False
     _APIFY_CLIENT_IMPORT_ERROR = repr(_exc)
+
+_USE_APIFY_CLIENT = _APIFY_CLIENT_AVAILABLE and os.getenv("APIFY_USE_CLIENT", "0") == "1"
+
+
+def _to_dict(obj: Any) -> dict[str, Any]:
+    """Normalize apify-client v2 Pydantic models (or dicts) into a plain dict.
+
+    apify-client v1.x returned plain dicts. v2.x returns Pydantic v2 models,
+    which don't support subscript access (`obj["id"]`) and break our existing
+    dict-shaped consumer code. This helper unifies both shapes.
+    """
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    for method in ("model_dump", "dict", "to_dict"):
+        fn = getattr(obj, method, None)
+        if callable(fn):
+            try:
+                return fn()
+            except Exception:
+                continue
+    if hasattr(obj, "__dict__"):
+        return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
+    return {}
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -352,7 +379,11 @@ def _build_actor_payload(
 
 def _apify_start_run(token: str, actor_id: str, payload: dict[str, Any]) -> str:
     if _USE_APIFY_CLIENT and ApifyClient is not None:
-        return ApifyClient(token).actor(actor_id).start(run_input=payload)["id"]
+        run = _to_dict(ApifyClient(token).actor(actor_id).start(run_input=payload))
+        run_id = run.get("id")
+        if run_id:
+            return str(run_id)
+        # Pydantic model conversion lost the id — fall through to REST.
     url = f"https://api.apify.com/v2/acts/{actor_id}/runs"
     resp = requests.post(url, params={"token": token}, json=payload, timeout=30)
     if not resp.ok:
@@ -362,7 +393,9 @@ def _apify_start_run(token: str, actor_id: str, payload: dict[str, Any]) -> str:
 
 def _apify_get_run(token: str, run_id: str) -> dict[str, Any]:
     if _USE_APIFY_CLIENT and ApifyClient is not None:
-        return ApifyClient(token).run(run_id).get() or {"id": run_id, "status": "?"}
+        run = _to_dict(ApifyClient(token).run(run_id).get())
+        if run:
+            return run
     url = f"https://api.apify.com/v2/actor-runs/{run_id}"
     resp = requests.get(url, params={"token": token}, timeout=30)
     if not resp.ok:
@@ -375,6 +408,9 @@ def _apify_abort_run(token: str, run_id: str) -> None:
         if _USE_APIFY_CLIENT and ApifyClient is not None:
             ApifyClient(token).run(run_id).abort()
             return
+    except Exception:
+        pass
+    try:
         requests.post(
             f"https://api.apify.com/v2/actor-runs/{run_id}/abort",
             params={"token": token}, timeout=15,
@@ -385,7 +421,11 @@ def _apify_abort_run(token: str, run_id: str) -> None:
 
 def _apify_list_dataset(token: str, dataset_id: str) -> list[dict]:
     if _USE_APIFY_CLIENT and ApifyClient is not None:
-        return list(ApifyClient(token).dataset(dataset_id).iterate_items())
+        try:
+            items = list(ApifyClient(token).dataset(dataset_id).iterate_items())
+            return [_to_dict(it) if not isinstance(it, dict) else it for it in items]
+        except Exception:
+            pass  # fall through to REST
     url = f"https://api.apify.com/v2/datasets/{dataset_id}/items"
     resp = requests.get(url, params={"token": token, "format": "json"}, timeout=60)
     if not resp.ok:
@@ -469,13 +509,17 @@ def run_actor_sync(
         max_items=max_items, max_search_pages=max_search_pages,
     )
     if _USE_APIFY_CLIENT and ApifyClient is not None:
-        run = ApifyClient(token).actor(actor_id).call(run_input=payload, timeout_secs=timeout_secs)
-        if not run or run.get("status") != "SUCCEEDED":
-            status = (run or {}).get("status", "no run")
-            msg = (run or {}).get("statusMessage", "")
-            raise RuntimeError(f"Apify run did not succeed: {status} {msg}")
-        dataset_id = run.get("defaultDatasetId")
-        return _apify_list_dataset(token, dataset_id) if dataset_id else []
+        try:
+            run = _to_dict(
+                ApifyClient(token).actor(actor_id).call(run_input=payload, timeout_secs=timeout_secs)
+            )
+            if run and run.get("status") == "SUCCEEDED":
+                dataset_id = run.get("defaultDatasetId")
+                return _apify_list_dataset(token, dataset_id) if dataset_id else []
+            # If we got a non-success status, fall through to REST so the user
+            # at least gets a clean error from the canonical endpoint.
+        except Exception:
+            pass  # fall through to REST
     url = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items"
     resp = requests.post(
         url, params={"token": token, "timeout": timeout_secs, "format": "json"},
@@ -1008,12 +1052,14 @@ def render_sidebar() -> dict[str, Any]:
         st.divider()
         st.caption(f"APIFY_TOKEN: {'✅ set' if _token_ok() else '⚠️ missing / placeholder'}")
         if _USE_APIFY_CLIENT:
-            st.caption("Apify backend: ✅ `apify-client`")
-        else:
+            st.caption("Apify backend: ✅ `apify-client` (opted in via APIFY_USE_CLIENT=1)")
+        elif _APIFY_CLIENT_AVAILABLE:
             st.caption(
-                "Apify backend: 🟡 raw REST (apify-client unavailable). "
-                "On Streamlit Cloud, set Python to 3.12 in app Settings and reboot to pick up `apify-client`."
+                "Apify backend: 🟢 raw REST (default — most reliable). "
+                "`apify-client` is installed; set env var **APIFY_USE_CLIENT=1** to opt in."
             )
+        else:
+            st.caption("Apify backend: 🟢 raw REST (apify-client not installed)")
 
     return {
         "asset_class": None if asset_class == "(any)" else asset_class,
