@@ -1110,103 +1110,78 @@ def _token_ok() -> bool:
 
 def render_sidebar() -> dict[str, Any]:
     with st.sidebar:
-        st.subheader("Apify — Crexi scraper")
+        st.subheader("🔍 Deal Screener filters")
+        st.caption("Filters for the Apify Crexi pull. Underwriting math + screening rule "
+                   "moved to the Deal Screener tab.")
 
         actor_choice = st.selectbox(
             "Apify actor",
             list(ACTOR_CATALOG.keys()),
-            index=0,
-            key="sb_actor",
-            help="skootle is the default — only one we've verified returns full-field data. "
-                 "crawlerbros is sparser (no cap rate / SF / address) and will leave the "
-                 "verdict column blank.",
+            index=0, key="sb_actor",
+            help="skootle is the only actor that returns full-field data.",
         )
         _actor_meta = ACTOR_CATALOG[actor_choice]
         if _actor_meta["warning"]:
             st.warning(_actor_meta["warning"], icon="⚠️")
 
         state_code = st.selectbox(
-            "State",
-            US_STATES,
+            "State", US_STATES,
             index=US_STATES.index(DEFAULT_STATE_CODE),
             key="sb_state",
-            help="Sent in the locations array and baked into the search query.",
         )
 
-        asset_class = st.selectbox(
-            "Strategy preset (Asset class shortcut)",
-            ["(any)"] + list(ASSET_CLASS_CATALOG.keys()),
-            index=0,
-            help=(
-                "User-friendly tax-alpha shortcuts. Picking 'Gas Station' or 'Express Car Wash' "
-                "unlocks the IRS Class 57.1 15-year-depreciation tag. Use the Crexi-native "
-                "selectors below for finer category/sub-type filtering aligned with Crexi's UI."
-            ),
-            key="sb_asset_class",
-        )
-
-        st.markdown("**Crexi native category** *(matches Crexi's Property Type filter)*")
         crexi_cat = st.selectbox(
-            "Crexi category",
-            ["(any)"] + list(CREXI_TAXONOMY.keys()),
-            index=0,
-            key="sb_crexi_cat",
-            help="Crexi's top-level Property Type. Sent into the payload's propertyTypes array.",
+            "Crexi category", ["(any)"] + list(CREXI_TAXONOMY.keys()),
+            index=0, key="sb_crexi_cat",
+            help="Matches Crexi's Property Type filter.",
         )
         crexi_subs_available = CREXI_TAXONOMY.get(crexi_cat, []) if crexi_cat != "(any)" else []
         if crexi_subs_available:
             crexi_sub = st.selectbox(
-                "Sub-type",
-                ["(any)"] + crexi_subs_available,
-                index=0,
-                key="sb_crexi_sub",
-                help="Crexi's sub-category checkboxes. Concatenated into the search query.",
+                "Sub-type", ["(any)"] + crexi_subs_available,
+                index=0, key="sb_crexi_sub",
             )
         else:
             crexi_sub = "(any)"
-            if crexi_cat != "(any)":
-                st.caption(f"_{crexi_cat} has no sub-categories on Crexi._")
+
         city_or_county_in = st.text_input(
             "City or County (optional)",
-            value="",
-            placeholder="e.g. Atlanta, Cumming, Forsyth County",
-            help="Narrows to a specific GA submarket.",
+            placeholder="e.g. Atlanta, Hall County",
             key="sb_city",
         )
 
-        st.markdown("**Price & cap filters**")
         pc1, pc2 = st.columns(2)
         with pc1:
             price_min_in = st.number_input(
                 "Min price ($M)", 0.0, 500.0, 0.0, 0.25, format="%.2f",
-                key="sb_price_min", help="In millions. 0 = no minimum.",
+                key="sb_price_min",
             )
         with pc2:
             price_max_in = st.number_input(
                 "Max price ($M)", 0.0, 500.0, 0.0, 0.25, format="%.2f",
-                key="sb_price_max", help="In millions. 0 = no maximum.",
+                key="sb_price_max",
             )
         cap_min_in = st.number_input(
             "Min cap rate (%)", 0.0, 20.0, 0.0, 0.25, format="%.2f",
-            key="sb_cap_min", help="0 = no minimum.",
+            key="sb_cap_min",
         )
         lease_type_in = st.selectbox(
-            "Lease type", ["(any)", "NNN", "NN", "Gross", "Modified Gross", "Absolute Net"],
+            "Lease type",
+            ["(any)", "NNN", "NN", "Gross", "Modified Gross", "Absolute Net"],
             index=0, key="sb_lease_type",
         )
-
         search_keywords_in = st.text_input(
-            "Extra free-text keywords (optional)",
-            value="",
-            placeholder="e.g. value-add, anchored, drive-thru",
-            help="Appended verbatim to the Crexi search query.",
+            "Extra keywords (optional)",
+            placeholder="e.g. value-add, drive-thru",
             key="sb_keywords",
         )
 
-        # Live query preview so the user can see exactly what's sent to Crexi.
-        _state_text = state_code  # Send the 2-letter state code into the search query
+        # Strategy preset removed — Crexi category + sub-type cover the same
+        # ground more precisely. asset_class is kept in the returned dict (None)
+        # so downstream tax-alpha checks degrade gracefully.
+        asset_class = "(any)"
+
         _query_parts = [
-            None if asset_class == "(any)" else asset_class,
             None if crexi_sub == "(any)" else crexi_sub,
             None if crexi_cat == "(any)" or crexi_sub != "(any)" else crexi_cat,
             city_or_county_in.strip() or None,
@@ -1214,57 +1189,42 @@ def render_sidebar() -> dict[str, Any]:
             f"${price_min_in:.1f}M-${price_max_in:.1f}M" if (price_min_in or price_max_in) else None,
             f"{cap_min_in:.1f}% cap" if cap_min_in else None,
             search_keywords_in.strip() or None,
-            _state_text,
+            state_code,
         ]
         _preview_query = " ".join(p for p in _query_parts if p)
-        st.caption(f"🔎 Crexi query preview: `{_preview_query}`")
-        st.markdown("**Bulk URL mode** *(recommended right now)*")
-        st.caption(
-            "⚠️ Crexi changed their search UI; skootle and cypherai both return 0 on search-based "
-            "fetches. The `propertyUrls` path still works perfectly. Paste Crexi listing URLs below "
-            "and we'll fetch each one."
-        )
+        st.caption(f"🔎 Query preview: `{_preview_query}`")
         bulk_urls_in = st.text_area(
-            "Paste Crexi property URLs (one per line)",
-            value="",
-            placeholder=(
-                "https://www.crexi.com/properties/2287401/georgia-chase-bank-cumming-ga\n"
-                "https://www.crexi.com/properties/2314443/...\n"
-                "https://www.crexi.com/properties/2320294/..."
-            ),
-            help="Go to crexi.com, run your search there, copy the URLs of listings you want, "
-                 "paste them here. Each URL ≈ $0.04 on Free tier.",
+            "Bulk Crexi URLs (one per line)",
+            placeholder="https://www.crexi.com/properties/2287401/...",
+            help="The working live path while Crexi's search-result actors are degraded. "
+                 "Each URL ≈ $0.04.",
             key="sb_bulk_urls",
-            height=120,
+            height=100,
         )
-        max_props = st.slider("Max properties (fallback for search mode)", 5, 200, DEFAULT_MAX_PROPERTIES, 5, key="sb_max_props")
+        max_props = st.slider(
+            "Max properties (search-mode fallback)", 5, 200, DEFAULT_MAX_PROPERTIES, 5,
+            key="sb_max_props",
+        )
 
-        # Compute parsed URL list + cost estimate for the active mode.
         _parsed_urls = [
             u.strip() for u in bulk_urls_in.splitlines()
             if u.strip().startswith("http")
         ]
         if _parsed_urls:
-            st.caption(
-                f"Bulk URL mode: **{len(_parsed_urls)} URLs** queued · "
-                f"~Estimated cost: **\\${len(_parsed_urls) * 0.04:,.2f}**"
-            )
+            st.caption(f"**{len(_parsed_urls)} URLs** queued · est. **\\${len(_parsed_urls) * 0.04:,.2f}**")
         else:
-            st.caption(
-                f"Search mode (degraded — may return 0): max {max_props} · "
-                f"~Estimated cost: **\\${max_props * 0.04:,.2f}** at Free tier"
-            )
+            st.caption(f"Search mode · max {max_props} · est. **\\${max_props * 0.04:,.2f}**")
 
         run_btn = st.button(
             "🔄 Fetch live deals from Crexi",
             type="primary",
             use_container_width=True,
             disabled=not _token_ok(),
-            help=None if _token_ok() else "Set APIFY_TOKEN in .env first",
+            help=None if _token_ok() else "Set APIFY_TOKEN in .env or st.secrets first",
             key="sb_run_btn",
         )
 
-        with st.expander("…or load an existing dataset by id"):
+        with st.expander("…or load an existing Apify dataset", expanded=False):
             ds_id_in = st.text_input("Dataset id", value=APIFY_DATASET_ID, key="sb_ds_id")
             load_ds_btn = st.button(
                 "Load dataset", use_container_width=True,
@@ -1272,41 +1232,17 @@ def render_sidebar() -> dict[str, Any]:
             )
 
         st.divider()
-        st.subheader("Action-Required rule")
-        min_cap = st.number_input("Min cap rate (%)", 0.0, 25.0, DEFAULT_MIN_CAP, 0.1, key="sb_min_cap")
-        max_price_rule = st.number_input(
-            "Max asking price ($)", 0, 100_000_000, DEFAULT_MAX_PRICE, 100_000, key="sb_max_price_rule",
-        )
-
-        st.divider()
-        st.subheader("Underwriting assumptions")
-        hold_years = st.number_input("Hold years", 1, 30, DEFAULT_HOLD_YEARS, 1, key="sb_hold_years")
-        noi_growth = st.number_input("NOI growth (%)", 0.0, 15.0, DEFAULT_NOI_GROWTH, 0.25, key="sb_noi_growth")
-        exit_cap_delta = st.number_input(
-            "Exit cap delta (bps over entry)", -200, 500, DEFAULT_EXIT_CAP_DELTA_BPS, 25,
-            help="Exit cap = entry cap + this many bps. 0 = same cap.",
-            key="sb_exit_cap_delta",
-        )
-        ltv = st.number_input("LTV (%)", 0.0, 100.0, DEFAULT_LTV, 1.0, key="sb_ltv")
-        loan_rate = st.number_input("Loan rate (%)", 0.0, 20.0, DEFAULT_LOAN_RATE, 0.05, key="sb_loan_rate")
-        amort_years = st.number_input("Amortization (years)", 5, 40, DEFAULT_AMORT_YEARS, 1, key="sb_amort_years")
-        discount_rate = st.number_input(
-            "Discount rate / target yield (%)", 0.0, 30.0, DEFAULT_DISCOUNT_RATE, 0.5,
-            key="sb_discount_rate",
-        )
-
-        st.divider()
-        st.caption(f"APIFY_TOKEN: {'✅ set' if _token_ok() else '⚠️ missing / placeholder'}")
+        st.caption(f"APIFY_TOKEN: {'✅ set' if _token_ok() else '⚠️ missing'}")
         if _USE_APIFY_CLIENT:
-            st.caption("Apify backend: ✅ `apify-client` (opted in via APIFY_USE_CLIENT=1)")
+            st.caption("Apify backend: ✅ `apify-client`")
         elif _APIFY_CLIENT_AVAILABLE:
-            st.caption(
-                "Apify backend: 🟢 raw REST (default — most reliable). "
-                "`apify-client` is installed; set env var **APIFY_USE_CLIENT=1** to opt in."
-            )
+            st.caption("Apify backend: 🟢 raw REST (set APIFY_USE_CLIENT=1 to opt in)")
         else:
-            st.caption("Apify backend: 🟢 raw REST (apify-client not installed)")
+            st.caption("Apify backend: 🟢 raw REST")
 
+    # Underwriting / rule values are now controlled by the expander at the top
+    # of the Deal Screener tab. The sidebar ships defaults; the screener tab
+    # merges its widget values in before downstream functions consume `sb`.
     return {
         "actor_id": _actor_meta["id"],
         "actor_label": actor_choice,
@@ -1326,15 +1262,16 @@ def render_sidebar() -> dict[str, Any]:
         "run_btn": run_btn,
         "ds_id_in": ds_id_in,
         "load_ds_btn": load_ds_btn,
-        "min_cap": min_cap,
-        "max_price_rule": max_price_rule,
-        "hold_years": int(hold_years),
-        "noi_growth": float(noi_growth),
-        "exit_cap_delta": int(exit_cap_delta),
-        "ltv": float(ltv),
-        "loan_rate": float(loan_rate),
-        "amort_years": int(amort_years),
-        "discount_rate": float(discount_rate),
+        # CCIM defaults — overridden by the Screener tab's expander widgets.
+        "min_cap": DEFAULT_MIN_CAP,
+        "max_price_rule": DEFAULT_MAX_PRICE,
+        "hold_years": DEFAULT_HOLD_YEARS,
+        "noi_growth": DEFAULT_NOI_GROWTH,
+        "exit_cap_delta": DEFAULT_EXIT_CAP_DELTA_BPS,
+        "ltv": DEFAULT_LTV,
+        "loan_rate": DEFAULT_LOAN_RATE,
+        "amort_years": DEFAULT_AMORT_YEARS,
+        "discount_rate": DEFAULT_DISCOUNT_RATE,
     }
 
 
@@ -1478,6 +1415,74 @@ def render_command_center(deal: pd.Series, idx: int, sb: dict) -> None:
 # ---------- Screener tab ----------
 
 def render_screener_tab(sb: dict) -> None:
+    # CCIM 101 controls — screening rule + underwriting assumptions.
+    # Hidden behind a collapsed expander so the tab isn't cluttered for users
+    # who only want the listing table; opens when they need to tune the math.
+    with st.expander("⚙️ CCIM rule + underwriting assumptions", expanded=False):
+        st.caption(
+            "Drives the Action-Required verdict and the per-deal investment "
+            "analysis (IRR, NPV, equity multiple). Defaults are sensible starting "
+            "points; tune to your acquisition strategy."
+        )
+        st.markdown("**Action-Required rule**")
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            scr_min_cap = st.number_input(
+                "Min cap rate (%)", 0.0, 25.0, DEFAULT_MIN_CAP, 0.1, key="scr_min_cap",
+            )
+        with rc2:
+            scr_max_price_rule = st.number_input(
+                "Max asking price ($)", 0, 100_000_000, DEFAULT_MAX_PRICE, 100_000,
+                key="scr_max_price_rule",
+            )
+
+        st.markdown("**Underwriting assumptions (CCIM-style)**")
+        uc1, uc2, uc3, uc4 = st.columns(4)
+        with uc1:
+            scr_hold = st.number_input("Hold years", 1, 30, DEFAULT_HOLD_YEARS, 1, key="scr_hold")
+        with uc2:
+            scr_growth = st.number_input(
+                "NOI growth (%)", 0.0, 15.0, DEFAULT_NOI_GROWTH, 0.25, key="scr_growth",
+            )
+        with uc3:
+            scr_exit_delta = st.number_input(
+                "Exit cap delta (bps)", -200, 500, DEFAULT_EXIT_CAP_DELTA_BPS, 25,
+                key="scr_exit_delta",
+                help="Exit cap = entry cap + this many bps. 0 = same cap.",
+            )
+        with uc4:
+            scr_ltv = st.number_input("LTV (%)", 0.0, 100.0, DEFAULT_LTV, 1.0, key="scr_ltv")
+
+        uc5, uc6, uc7 = st.columns(3)
+        with uc5:
+            scr_loan_rate = st.number_input(
+                "Loan rate (%)", 0.0, 20.0, DEFAULT_LOAN_RATE, 0.05, key="scr_loan_rate",
+            )
+        with uc6:
+            scr_amort = st.number_input(
+                "Amortization (years)", 5, 40, DEFAULT_AMORT_YEARS, 1, key="scr_amort",
+            )
+        with uc7:
+            scr_discount = st.number_input(
+                "Discount rate / target yield (%)", 0.0, 30.0, DEFAULT_DISCOUNT_RATE, 0.5,
+                key="scr_discount",
+            )
+
+    # Overlay the tab's widget values onto the sidebar dict so downstream code
+    # (analyze_and_score, _investment_for_deal, etc.) reads the user's choices.
+    sb = {
+        **sb,
+        "min_cap": float(scr_min_cap),
+        "max_price_rule": float(scr_max_price_rule),
+        "hold_years": int(scr_hold),
+        "noi_growth": float(scr_growth),
+        "exit_cap_delta": int(scr_exit_delta),
+        "ltv": float(scr_ltv),
+        "loan_rate": float(scr_loan_rate),
+        "amort_years": int(scr_amort),
+        "discount_rate": float(scr_discount),
+    }
+
     if sb["run_btn"]:
         bulk_urls = sb.get("bulk_urls") or []
         # Crexi's search parser stumbles on punctuation (`/`, double spaces); strip.
