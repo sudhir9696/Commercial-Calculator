@@ -24,8 +24,19 @@ import numpy_financial as npf
 import pandas as pd
 import requests
 import streamlit as st
-from apify_client import ApifyClient
 from dotenv import load_dotenv
+
+# Optional apify-client. We prefer it when available; on Streamlit Cloud
+# (Python 3.14) the install can fail because some transitive deps don't yet
+# ship 3.14 wheels. Fall back to raw REST so the app still runs.
+try:
+    from apify_client import ApifyClient
+    _USE_APIFY_CLIENT = True
+    _APIFY_CLIENT_IMPORT_ERROR: str | None = None
+except Exception as _exc:
+    ApifyClient = None  # type: ignore[assignment]
+    _USE_APIFY_CLIENT = False
+    _APIFY_CLIENT_IMPORT_ERROR = repr(_exc)
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -337,6 +348,51 @@ def _build_actor_payload(
     return payload
 
 
+# ---------- Apify backend abstraction (apify-client preferred, REST fallback) ----------
+
+def _apify_start_run(token: str, actor_id: str, payload: dict[str, Any]) -> str:
+    if _USE_APIFY_CLIENT and ApifyClient is not None:
+        return ApifyClient(token).actor(actor_id).start(run_input=payload)["id"]
+    url = f"https://api.apify.com/v2/acts/{actor_id}/runs"
+    resp = requests.post(url, params={"token": token}, json=payload, timeout=30)
+    if not resp.ok:
+        raise RuntimeError(_apify_error_message(resp))
+    return resp.json()["data"]["id"]
+
+
+def _apify_get_run(token: str, run_id: str) -> dict[str, Any]:
+    if _USE_APIFY_CLIENT and ApifyClient is not None:
+        return ApifyClient(token).run(run_id).get() or {"id": run_id, "status": "?"}
+    url = f"https://api.apify.com/v2/actor-runs/{run_id}"
+    resp = requests.get(url, params={"token": token}, timeout=30)
+    if not resp.ok:
+        raise RuntimeError(_apify_error_message(resp))
+    return resp.json()["data"]
+
+
+def _apify_abort_run(token: str, run_id: str) -> None:
+    try:
+        if _USE_APIFY_CLIENT and ApifyClient is not None:
+            ApifyClient(token).run(run_id).abort()
+            return
+        requests.post(
+            f"https://api.apify.com/v2/actor-runs/{run_id}/abort",
+            params={"token": token}, timeout=15,
+        )
+    except Exception:
+        pass
+
+
+def _apify_list_dataset(token: str, dataset_id: str) -> list[dict]:
+    if _USE_APIFY_CLIENT and ApifyClient is not None:
+        return list(ApifyClient(token).dataset(dataset_id).iterate_items())
+    url = f"https://api.apify.com/v2/datasets/{dataset_id}/items"
+    resp = requests.get(url, params={"token": token, "format": "json"}, timeout=60)
+    if not resp.ok:
+        raise RuntimeError(_apify_error_message(resp))
+    return resp.json()
+
+
 def run_actor_async(
     token: str,
     actor_id: str,
@@ -352,25 +408,24 @@ def run_actor_async(
     poll_seconds: int = 5,
     progress_cb=None,
 ) -> tuple[list[dict], dict[str, Any]]:
-    """Start an Apify actor run via apify-client, poll for progress, return items.
+    """Start an Apify actor run, poll for progress, return its dataset items.
 
-    Uses ApifyClient for the run/poll/dataset calls; keeps an explicit polling
-    loop so the Streamlit UI can show live progress via `progress_cb`
-    (apify-client's blocking `.call()` would freeze the UI with no feedback).
+    Routes the underlying calls through apify-client when available, falls back
+    to raw REST. The explicit poll loop is kept so the Streamlit UI can show
+    live progress via `progress_cb` (apify-client's blocking `.call()` would
+    freeze the UI with no feedback).
     """
-    client = ApifyClient(token)
     payload = _build_actor_payload(
         search_keywords=search_keywords, start_urls=start_urls, property_urls=property_urls,
         property_types=property_types, locations=locations,
         max_items=max_items, max_search_pages=max_search_pages,
     )
-    run = client.actor(actor_id).start(run_input=payload)
-    run_id = run["id"]
+    run_id = _apify_start_run(token, actor_id, payload)
     start = time.monotonic()
     last: dict[str, Any] = {"id": run_id, "status": "READY"}
 
     while True:
-        last = client.run(run_id).get() or {"id": run_id, "status": "?"}
+        last = _apify_get_run(token, run_id)
         elapsed = int(time.monotonic() - start)
         item_count = (last.get("stats") or {}).get("itemCount", 0)
         if progress_cb:
@@ -378,10 +433,7 @@ def run_actor_async(
         if last.get("status") in ("SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"):
             break
         if elapsed >= timeout_secs:
-            try:
-                client.run(run_id).abort()
-            except Exception:
-                pass
+            _apify_abort_run(token, run_id)
             raise RuntimeError(f"Apify run exceeded {timeout_secs}s — aborted.")
         time.sleep(poll_seconds)
 
@@ -392,8 +444,7 @@ def run_actor_async(
     dataset_id = last.get("defaultDatasetId")
     if not dataset_id:
         return [], last
-    items = list(client.dataset(dataset_id).iterate_items())
-    return items, last
+    return _apify_list_dataset(token, dataset_id), last
 
 
 def run_actor_sync(
@@ -409,31 +460,36 @@ def run_actor_sync(
 ) -> list[dict]:
     """Synchronous single-shot — used by the analyzer's single-URL fetch.
 
-    Uses apify-client's blocking `.call()` since the analyzer pulls one
-    listing and doesn't need live progress.
+    Uses apify-client's blocking `.call()` when available; otherwise hits the
+    REST `/run-sync-get-dataset-items` endpoint directly.
     """
-    client = ApifyClient(token)
     payload = _build_actor_payload(
         search_keywords=search_keywords, start_urls=start_urls, property_urls=property_urls,
         property_types=property_types, locations=locations,
         max_items=max_items, max_search_pages=max_search_pages,
     )
-    run = client.actor(actor_id).call(run_input=payload, timeout_secs=timeout_secs)
-    if not run or run.get("status") != "SUCCEEDED":
-        status = (run or {}).get("status", "no run")
-        msg = (run or {}).get("statusMessage", "")
-        raise RuntimeError(f"Apify run did not succeed: {status} {msg}")
-    dataset_id = run.get("defaultDatasetId")
-    if not dataset_id:
-        return []
-    return list(client.dataset(dataset_id).iterate_items())
+    if _USE_APIFY_CLIENT and ApifyClient is not None:
+        run = ApifyClient(token).actor(actor_id).call(run_input=payload, timeout_secs=timeout_secs)
+        if not run or run.get("status") != "SUCCEEDED":
+            status = (run or {}).get("status", "no run")
+            msg = (run or {}).get("statusMessage", "")
+            raise RuntimeError(f"Apify run did not succeed: {status} {msg}")
+        dataset_id = run.get("defaultDatasetId")
+        return _apify_list_dataset(token, dataset_id) if dataset_id else []
+    url = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items"
+    resp = requests.post(
+        url, params={"token": token, "timeout": timeout_secs, "format": "json"},
+        json=payload, timeout=timeout_secs + 30,
+    )
+    if not resp.ok:
+        raise RuntimeError(_apify_error_message(resp))
+    return resp.json()
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_dataset_items(token: str, dataset_id: str) -> list[dict]:
     """Load an existing Apify dataset by id (used when the user pastes one)."""
-    client = ApifyClient(token)
-    return list(client.dataset(dataset_id).iterate_items())
+    return _apify_list_dataset(token, dataset_id)
 
 
 # ---------- Flagging ----------
@@ -951,6 +1007,13 @@ def render_sidebar() -> dict[str, Any]:
 
         st.divider()
         st.caption(f"APIFY_TOKEN: {'✅ set' if _token_ok() else '⚠️ missing / placeholder'}")
+        if _USE_APIFY_CLIENT:
+            st.caption("Apify backend: ✅ `apify-client`")
+        else:
+            st.caption(
+                "Apify backend: 🟡 raw REST (apify-client unavailable). "
+                "On Streamlit Cloud, set Python to 3.12 in app Settings and reboot to pick up `apify-client`."
+            )
 
     return {
         "asset_class": None if asset_class == "(any)" else asset_class,
