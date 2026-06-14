@@ -24,6 +24,7 @@ import numpy_financial as npf
 import pandas as pd
 import requests
 import streamlit as st
+from apify_client import ApifyClient
 from dotenv import load_dotenv
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -123,65 +124,8 @@ DEFAULT_LOAN_RATE = 7.0
 DEFAULT_AMORT_YEARS = 25
 DEFAULT_DISCOUNT_RATE = 10.0
 
-SAMPLE_DEALS: list[dict[str, Any]] = [
-    {
-        "address": "1421 Peachtree St NE", "city": "Atlanta", "state": "GA", "zip_code": "30309",
-        "price": "$2,350,000", "cap_rate": "7.8%", "square_footage": 18_500,
-        "documents": [{"name": "Offering Memorandum", "url": "https://example.com/oms/1421-peachtree.pdf"}],
-        "property_url": "https://www.crexi.com/example/1421-peachtree",
-        "property_type": "Retail",
-        "description": "Anchored retail strip in Buckhead with credit national tenants.",
-    },
-    {
-        "address": "88 Industrial Pkwy", "city": "Savannah", "state": "GA", "zip_code": "31405",
-        "price": "$4,100,000", "cap_rate": "8.4%", "square_footage": 42_000,
-        "documents": ["https://example.com/oms/88-industrial.pdf"],
-        "property_url": "https://www.crexi.com/example/88-industrial-savannah",
-        "property_type": "Industrial",
-        "description": "Flex industrial near the port. Long-term single-tenant lease.",
-    },
-    {
-        "address": "775 Buford Hwy (Unbranded Gas + C-Store)", "city": "Cumming", "state": "GA", "zip_code": "30041",
-        "price": "$3,250,000", "cap_rate": "8.1%", "square_footage": 4_200,
-        "documents": [],
-        "property_url": "https://www.crexi.com/example/775-buford-gas",
-        "property_type": "Specialty",
-        "description": (
-            "Unbranded fuel station with 6 MPDs, attached C-store, COAM gaming machines and "
-            "lottery sales. Strong vending revenue. Phase 1 environmental on file."
-        ),
-    },
-    {
-        "address": "4100 Express Wash Tunnel", "city": "Roswell", "state": "GA", "zip_code": "30075",
-        "price": "$5,200,000", "cap_rate": "9.0%", "square_footage": 6_800,
-        "documents": [],
-        "property_url": "https://www.crexi.com/example/4100-express-wash",
-        "property_type": "Specialty",
-        "description": (
-            "Express tunnel wash with full automated equipment package. 130 ft conveyor tunnel, "
-            "vacuum bay, 5 prep bays. Replacement cost well above asking price."
-        ),
-    },
-    {
-        "address": "1900 Self-Storage Way", "city": "Macon", "state": "GA", "zip_code": "31204",
-        "price": "$6,750,000", "cap_rate": "6.4%", "square_footage": 55_300,
-        "documents": [],
-        "property_url": "https://www.crexi.com/example/1900-self-storage-macon",
-        "property_type": "Self Storage",
-        "description": (
-            "Climate controlled self-storage facility with expansion potential on 2 adjacent "
-            "parcels. ~30% occupancy upside; current rent roll has 7 non-paying tenants."
-        ),
-    },
-    {
-        "address": "5 Broad St (Quick-Lube)", "city": "Augusta", "state": "GA", "zip_code": "30901",
-        "price": "$1,950,000", "cap_rate": "9.2%", "square_footage": 11_400,
-        "documents": [],
-        "property_url": "https://www.crexi.com/example/5-broad-augusta",
-        "property_type": "Specialty",
-        "description": "Quick-lube + auto service. 4 bay drive-through. Long-term operator.",
-    },
-]
+# Per Product Owner spec: no mock/sample data. Empty state shown until a
+# live Apify run completes.
 
 GA_ALIASES = {"GA", "GEORGIA", "GA.", "GA,"}
 
@@ -327,15 +271,6 @@ def _apify_error_message(resp: requests.Response) -> str:
     return f"HTTP {resp.status_code}: {msg}"
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_dataset_items(token: str, dataset_id: str) -> list[dict]:
-    url = f"https://api.apify.com/v2/datasets/{dataset_id}/items"
-    resp = requests.get(url, params={"token": token, "format": "json"}, timeout=60)
-    if not resp.ok:
-        raise RuntimeError(_apify_error_message(resp))
-    return resp.json()
-
-
 # ---------- Last-fetch persistence (survives session resets within a container) ----------
 
 def save_last_fetch(rows: list[dict], source: str, query: str) -> None:
@@ -374,6 +309,7 @@ def _build_actor_payload(
     start_urls: list[str] | None,
     property_urls: list[str] | None,
     property_types: list[str] | None,
+    locations: list[str] | None,
     max_items: int,
     max_search_pages: int,
 ) -> dict[str, Any]:
@@ -389,41 +325,16 @@ def _build_actor_payload(
     if property_urls:
         payload["propertyUrls"] = property_urls
     if property_types:
-        # Skootle's current schema ignores propertyTypes — we send it anyway so
-        # the asset-class catalog mapping is exercised end-to-end and any future
-        # actor build that does honor it will pick it up automatically.
+        # Forward-compat: skootle currently ignores propertyTypes; included so
+        # the asset-class catalog mapping is exercised end-to-end.
         payload["propertyTypes"] = property_types
+    if locations:
+        # Forward-compat: skootle has no `locations` input today. Crawlerbros
+        # accepts state codes here only. We pass the user's City/County so the
+        # mapping is documented in code; the actual filtering happens via
+        # `searchKeywords` which Crexi's free-text search does parse.
+        payload["locations"] = locations
     return payload
-
-
-def start_actor_run(token: str, actor_id: str, payload: dict[str, Any]) -> str:
-    """Start an Apify actor run asynchronously and return the run id."""
-    url = f"https://api.apify.com/v2/acts/{actor_id}/runs"
-    resp = requests.post(url, params={"token": token}, json=payload, timeout=30)
-    if not resp.ok:
-        raise RuntimeError(_apify_error_message(resp))
-    return resp.json()["data"]["id"]
-
-
-def get_run_status(token: str, run_id: str) -> dict[str, Any]:
-    url = f"https://api.apify.com/v2/actor-runs/{run_id}"
-    resp = requests.get(url, params={"token": token}, timeout=30)
-    if not resp.ok:
-        raise RuntimeError(_apify_error_message(resp))
-    return resp.json()["data"]
-
-
-def abort_actor_run(token: str, run_id: str) -> None:
-    url = f"https://api.apify.com/v2/actor-runs/{run_id}/abort"
-    requests.post(url, params={"token": token}, timeout=15)
-
-
-def fetch_dataset_by_id(token: str, dataset_id: str) -> list[dict]:
-    url = f"https://api.apify.com/v2/datasets/{dataset_id}/items"
-    resp = requests.get(url, params={"token": token, "format": "json"}, timeout=60)
-    if not resp.ok:
-        raise RuntimeError(_apify_error_message(resp))
-    return resp.json()
 
 
 def run_actor_async(
@@ -434,83 +345,95 @@ def run_actor_async(
     start_urls: list[str] | None = None,
     property_urls: list[str] | None = None,
     property_types: list[str] | None = None,
+    locations: list[str] | None = None,
     max_items: int = 10,
     max_search_pages: int = 5,
     timeout_secs: int = DEFAULT_RUN_TIMEOUT_SECS,
     poll_seconds: int = 5,
     progress_cb=None,
 ) -> tuple[list[dict], dict[str, Any]]:
-    """Start an Apify actor run, poll until finished, and return its dataset items.
+    """Start an Apify actor run via apify-client, poll for progress, return items.
 
-    Calls `progress_cb(elapsed_s, status, item_count)` after each poll so the
-    Streamlit UI can show live progress instead of a frozen spinner.
+    Uses ApifyClient for the run/poll/dataset calls; keeps an explicit polling
+    loop so the Streamlit UI can show live progress via `progress_cb`
+    (apify-client's blocking `.call()` would freeze the UI with no feedback).
     """
+    client = ApifyClient(token)
     payload = _build_actor_payload(
         search_keywords=search_keywords, start_urls=start_urls, property_urls=property_urls,
-        property_types=property_types,
+        property_types=property_types, locations=locations,
         max_items=max_items, max_search_pages=max_search_pages,
     )
-    run_id = start_actor_run(token, actor_id, payload)
+    run = client.actor(actor_id).start(run_input=payload)
+    run_id = run["id"]
     start = time.monotonic()
-    last_run: dict[str, Any] = {"id": run_id, "status": "READY"}
+    last: dict[str, Any] = {"id": run_id, "status": "READY"}
+
     while True:
-        last_run = get_run_status(token, run_id)
+        last = client.run(run_id).get() or {"id": run_id, "status": "?"}
         elapsed = int(time.monotonic() - start)
-        item_count = (last_run.get("stats") or {}).get("inputBodyLen", 0)
-        try:
-            ds_id = last_run.get("defaultDatasetId")
-            if ds_id:
-                item_count = (last_run.get("stats") or {}).get("itemCount") or item_count
-        except Exception:
-            pass
+        item_count = (last.get("stats") or {}).get("itemCount", 0)
         if progress_cb:
-            progress_cb(elapsed, last_run.get("status", "?"), item_count)
-        if last_run.get("status") in ("SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"):
+            progress_cb(elapsed, last.get("status", "?"), item_count)
+        if last.get("status") in ("SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"):
             break
         if elapsed >= timeout_secs:
-            abort_actor_run(token, run_id)
+            try:
+                client.run(run_id).abort()
+            except Exception:
+                pass
             raise RuntimeError(f"Apify run exceeded {timeout_secs}s — aborted.")
         time.sleep(poll_seconds)
 
-    if last_run.get("status") != "SUCCEEDED":
-        msg = last_run.get("statusMessage") or last_run["status"]
-        raise RuntimeError(f"Apify run ended with status {last_run['status']}: {msg}")
+    if last.get("status") != "SUCCEEDED":
+        msg = last.get("statusMessage") or last.get("status", "UNKNOWN")
+        raise RuntimeError(f"Apify run ended with status {last.get('status')}: {msg}")
 
-    dataset_id = last_run.get("defaultDatasetId")
+    dataset_id = last.get("defaultDatasetId")
     if not dataset_id:
-        return [], last_run
-    return fetch_dataset_by_id(token, dataset_id), last_run
+        return [], last
+    items = list(client.dataset(dataset_id).iterate_items())
+    return items, last
 
 
-# Kept as a thin wrapper for the analyzer's single-property fetch (small / fast).
 def run_actor_sync(
     token: str, actor_id: str, *,
     search_keywords: list[str] | None = None,
     start_urls: list[str] | None = None,
     property_urls: list[str] | None = None,
     property_types: list[str] | None = None,
+    locations: list[str] | None = None,
     max_items: int = 10,
     max_search_pages: int = 5,
     timeout_secs: int = 600,
 ) -> list[dict]:
-    """Synchronous variant — used for fast single-URL fetches from the analyzer.
-    For multi-deal screener runs, use run_actor_async() with progress UI instead.
+    """Synchronous single-shot — used by the analyzer's single-URL fetch.
+
+    Uses apify-client's blocking `.call()` since the analyzer pulls one
+    listing and doesn't need live progress.
     """
+    client = ApifyClient(token)
     payload = _build_actor_payload(
         search_keywords=search_keywords, start_urls=start_urls, property_urls=property_urls,
-        property_types=property_types,
+        property_types=property_types, locations=locations,
         max_items=max_items, max_search_pages=max_search_pages,
     )
-    url = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items"
-    resp = requests.post(
-        url,
-        params={"token": token, "timeout": timeout_secs, "format": "json"},
-        json=payload,
-        timeout=timeout_secs + 30,
-    )
-    if not resp.ok:
-        raise RuntimeError(_apify_error_message(resp))
-    return resp.json()
+    run = client.actor(actor_id).call(run_input=payload, timeout_secs=timeout_secs)
+    if not run or run.get("status") != "SUCCEEDED":
+        status = (run or {}).get("status", "no run")
+        msg = (run or {}).get("statusMessage", "")
+        raise RuntimeError(f"Apify run did not succeed: {status} {msg}")
+    dataset_id = run.get("defaultDatasetId")
+    if not dataset_id:
+        return []
+    return list(client.dataset(dataset_id).iterate_items())
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_dataset_items(token: str, dataset_id: str) -> list[dict]:
+    """Load an existing Apify dataset by id (used when the user pastes one)."""
+    client = ApifyClient(token)
+    return list(client.dataset(dataset_id).iterate_items())
 
 
 # ---------- Flagging ----------
@@ -1204,11 +1127,18 @@ def render_screener_tab(sb: dict) -> None:
                     status.update(label=f"{run_status} · {elapsed}s elapsed · {items} items collected")
 
                 property_types_payload = ASSET_CLASS_CATALOG.get(sb["asset_class"], []) if sb["asset_class"] else []
+                # locations array per Product Owner spec: send the City/County
+                # text. Skootle ignores this field today, but it documents intent
+                # and is consumed if the actor adds support later. The actual
+                # location filtering happens via searchKeywords (Crexi parses it).
+                city_county = (sb.get("city_or_county") or "").strip()
+                locations_payload = [city_county] if city_county else None
                 rows, run_meta = run_actor_async(
                     APIFY_TOKEN,
                     DEFAULT_ACTOR_ID,
                     search_keywords=[query],
                     property_types=property_types_payload or None,
+                    locations=locations_payload,
                     max_items=sb["max_props"],
                     progress_cb=_on_progress,
                 )
@@ -1234,11 +1164,11 @@ def render_screener_tab(sb: dict) -> None:
                 st.error(f"Dataset load failed: {exc}")
 
     rows = st.session_state.get("deals_rows")
-    using_sample = False
     disk_loaded = False
+    age_min = None
 
-    # If session was reset (Cloud rebuild, tab close, etc.) try to recover the
-    # last fetch from disk before falling back to sample data.
+    # If session was reset (Cloud rebuild, tab close), recover the last
+    # successful live fetch from disk. NO sample-data fallback per spec.
     if not rows:
         last = load_last_fetch()
         if last and last.get("rows"):
@@ -1251,26 +1181,48 @@ def render_screener_tab(sb: dict) -> None:
             except Exception:
                 age_min = None
 
+    # Hard empty state — no mock data, no fallback. Prompt the user to fetch.
     if not rows:
-        rows = SAMPLE_DEALS
-        using_sample = True
+        with st.container(border=True):
+            st.subheader("📡 No live deals loaded")
+            st.markdown(
+                "This dashboard shows **only live Apify data** — there is no demo / mock dataset. "
+                "Configure the search in the sidebar and click 🔄 to pull listings."
+            )
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Connected actor**")
+                st.code(DEFAULT_ACTOR_ID, language="text")
+                st.caption(
+                    "skootle returns 50+ fields per listing including "
+                    "`address`, `capRatePct`, `squareFootageNum`, `description`, "
+                    "and broker contact. The Action-Required / GO verdict logic "
+                    "depends on these fields."
+                )
+            with c2:
+                st.markdown("**Current search**")
+                st.code(sb["search_query_preview"], language="text")
+                st.caption(
+                    f"State: locked to **{DEFAULT_STATE_CODE}** · "
+                    f"City/County: **{sb.get('city_or_county') or '(any)'}** · "
+                    f"Asset: **{sb.get('asset_class') or '(any)'}** · "
+                    f"Max: **{sb['max_props']}**"
+                )
+            st.markdown(
+                "👉 Click **🔄 Fetch live deals from Crexi** in the sidebar to start a run "
+                f"(estimated cost ~${sb['max_props'] * 0.04:.2f} at Free tier)."
+            )
+        return
 
     df = normalize_rows(rows)
     df = analyze_and_score(df, sb)
 
-    if using_sample:
-        st.warning(
-            "**🟡 Showing sample data (4 hard-coded GA deals).** "
-            "The sidebar filters and main-pane filters are working — they just don't have real data to filter yet. "
-            "👉 Set your filters in the sidebar and click **🔄 Fetch live deals from Crexi** to pull live listings.",
-            icon="⚠️",
-        )
-    elif disk_loaded:
+    if disk_loaded:
         ago = f"{age_min:.0f} min ago" if age_min is not None else "earlier"
         c_left, c_right = st.columns([5, 1])
-        c_left.info(f"📂 Restored last fetch from disk cache ({ago}). "
-                    f"Click 🔄 in the sidebar to fetch fresh data.")
-        if c_right.button("Use sample", help="Discard cached data and show sample data instead"):
+        c_left.info(f"📂 Restored last live fetch from disk cache ({ago}). "
+                    f"Click 🔄 in the sidebar to pull fresh data.")
+        if c_right.button("Clear cache", help="Discard cached data and return to empty state"):
             clear_last_fetch()
             st.session_state["deals_rows"] = None
             st.rerun()
