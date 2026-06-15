@@ -433,6 +433,7 @@ def normalize_rows(rows: list[dict], *, georgia_only: bool = True) -> pd.DataFra
             "state": explicit_state,
             "property_type": property_type,
             "sub_class": extract_subclass(r, fallback=property_type),
+            "transaction_type_native": str(_first_present(r, ("transactionType", "transaction_type", "listingType", "type")) or "").lower(),
             "asking_price": _coerce_float(_first_present(r, ("askingPriceUsd", "askingPrice", "price", "asking_price", "listPrice"))),
             "cap_rate_pct": _coerce_float(_first_present(r, ("capRatePct", "capRate", "cap_rate", "cap_rate_pct"))),
             "square_footage": _coerce_int(_first_present(r, ("squareFootageNum", "squareFootage", "buildingSqft", "square_footage", "squareFeet", "buildingSize", "sf", "size"))),
@@ -1142,6 +1143,15 @@ def render_sidebar() -> dict[str, Any]:
         if _actor_meta["warning"]:
             st.warning(_actor_meta["warning"], icon="⚠️")
 
+        transaction_type = st.radio(
+            "Looking for",
+            ["For Sale", "For Lease", "Both"],
+            index=0, horizontal=True,
+            key="sb_txn_type",
+            help="Crexi treats sale and lease as separate searches. Choose one for "
+                 "tighter results; pick 'Both' if you don't care.",
+        )
+
         state_code = st.selectbox(
             "State", US_STATES,
             index=US_STATES.index(DEFAULT_STATE_CODE),
@@ -1199,7 +1209,14 @@ def render_sidebar() -> dict[str, Any]:
         # so downstream tax-alpha checks degrade gracefully.
         asset_class = "(any)"
 
+        # Prepend the transaction type so Crexi's search parser narrows results.
+        _txn_query = {
+            "For Sale": "for sale",
+            "For Lease": "for lease",
+            "Both": None,
+        }.get(transaction_type)
         _query_parts = [
+            _txn_query,
             None if crexi_sub == "(any)" else crexi_sub,
             None if crexi_cat == "(any)" or crexi_sub != "(any)" else crexi_cat,
             city_or_county_in.strip() or None,
@@ -1264,6 +1281,7 @@ def render_sidebar() -> dict[str, Any]:
     return {
         "actor_id": _actor_meta["id"],
         "actor_label": actor_choice,
+        "transaction_type": transaction_type,
         "state_code": state_code,
         "asset_class": None if asset_class == "(any)" else asset_class,
         "crexi_category": None if crexi_cat == "(any)" else crexi_cat,
@@ -1690,6 +1708,16 @@ def render_screener_tab(sb: dict) -> None:
         return
 
     df = normalize_rows(rows)
+
+    # Hard sale/lease filter — Apify's `transactionType` is reliable on the rows
+    # that have it ("sale" or "lease"). Empty values are kept (some skootle
+    # responses don't populate it).
+    txn = sb.get("transaction_type")
+    if txn == "For Sale":
+        df = df[df["transaction_type_native"].isin(["sale", ""])]
+    elif txn == "For Lease":
+        df = df[df["transaction_type_native"].isin(["lease", ""])]
+
     df = analyze_and_score(df, sb)
 
     if disk_loaded:
