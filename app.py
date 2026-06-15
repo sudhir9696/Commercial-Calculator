@@ -638,17 +638,35 @@ def run_actor_async(
             break
         if elapsed >= timeout_secs:
             _apify_abort_run(token, run_id)
-            raise RuntimeError(f"Apify run exceeded {timeout_secs}s — aborted.")
+            last["status"] = "ABORTED"
+            last["statusMessage"] = f"Client-side timeout after {timeout_secs}s."
+            break
         time.sleep(poll_seconds)
 
-    if last.get("status") != "SUCCEEDED":
-        msg = last.get("statusMessage") or last.get("status", "UNKNOWN")
-        raise RuntimeError(f"Apify run ended with status {last.get('status')}: {msg}")
-
+    final_status = last.get("status")
     dataset_id = last.get("defaultDatasetId")
-    if not dataset_id:
-        return [], last
-    return _apify_list_dataset(token, dataset_id), last
+
+    if final_status == "SUCCEEDED":
+        if not dataset_id:
+            return [], last
+        return _apify_list_dataset(token, dataset_id), last
+
+    # Non-success status — try to recover partial results before raising.
+    # On TIMED-OUT / ABORTED, the actor often saved a portion of the dataset
+    # before being killed. Returning those lets the user see SOMETHING instead
+    # of a hard error after burning proxy credits.
+    if dataset_id:
+        try:
+            partial_items = _apify_list_dataset(token, dataset_id)
+        except Exception:
+            partial_items = []
+        if partial_items:
+            last["_partial"] = True
+            last["_partial_count"] = len(partial_items)
+            return partial_items, last
+
+    msg = last.get("statusMessage") or final_status or "UNKNOWN"
+    raise RuntimeError(f"Apify run ended with status {final_status}: {msg}")
 
 
 def run_actor_sync(
@@ -1519,17 +1537,15 @@ def render_screener_tab(sb: dict) -> None:
                     status.update(label=f"{run_status} · {elapsed}s elapsed · {items} items collected")
 
                 if bulk_urls:
-                    # WORKING PATH: skootle's propertyUrls handles direct listing
-                    # URLs reliably (62 fields per item) even though its search-
-                    # results scraping is currently degraded by Crexi UI changes.
                     rows, run_meta = run_actor_async(
                         APIFY_TOKEN, actor_id,
                         property_urls=bulk_urls,
                         max_items=len(bulk_urls),
                         progress_cb=_on_progress,
                     )
+                    _tag = " [PARTIAL]" if run_meta.get("_partial") else ""
                     source_label = (
-                        f"bulk-URL fetch via {actor_id} "
+                        f"bulk-URL fetch{_tag} via {actor_id} "
                         f"({len(bulk_urls)} URLs requested, {len(rows)} returned, run {run_meta.get('id','?')})"
                     )
                 else:
@@ -1543,8 +1559,9 @@ def render_screener_tab(sb: dict) -> None:
                         max_items=sb["max_props"],
                         progress_cb=_on_progress,
                     )
+                    _tag = " [PARTIAL]" if run_meta.get("_partial") else ""
                     source_label = (
-                        f"search via {actor_id} query='{query}' "
+                        f"search{_tag} via {actor_id} query='{query}' "
                         f"({len(rows)} items, run {run_meta.get('id','?')})"
                     )
 
@@ -1560,7 +1577,18 @@ def render_screener_tab(sb: dict) -> None:
                     max_search_pages=5,
                 )
                 save_last_fetch(rows, source_label, query if not bulk_urls else f"BULK ({len(bulk_urls)} URLs)")
-                if rows:
+                is_partial = bool(run_meta.get("_partial"))
+                if rows and is_partial:
+                    partial_count = run_meta.get("_partial_count", len(rows))
+                    status.update(
+                        label=(
+                            f"🟡 Partial fetch — Apify run ended early "
+                            f"({run_meta.get('status','?')}) after collecting {partial_count} listings. "
+                            f"Showing what we got."
+                        ),
+                        state="complete",
+                    )
+                elif rows:
                     status.update(label=f"✅ Fetched {len(rows)} GA listings from Crexi.", state="complete")
                 else:
                     status.update(
