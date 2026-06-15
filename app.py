@@ -100,9 +100,47 @@ def _secret(name: str, default: str = "") -> str:
 APIFY_TOKEN = _secret("APIFY_TOKEN")
 APIFY_DATASET_ID = _secret("APIFY_DATASET_ID")
 ANTHROPIC_API_KEY = _secret("ANTHROPIC_API_KEY")
+SCRAPINGBEE_API_KEY = _secret("SCRAPINGBEE_API_KEY")
 TOKEN_PLACEHOLDER = "your_apify_token_here"
 ANTHROPIC_MODEL = "claude-sonnet-4-6"
 ANTHROPIC_PLACEHOLDER = "your_anthropic_api_key_here"
+SCRAPINGBEE_BASE_URL = "https://app.scrapingbee.com/api/v1/"
+
+
+def _has_scrapingbee_key() -> bool:
+    return bool(SCRAPINGBEE_API_KEY) and not SCRAPINGBEE_API_KEY.lower().startswith("your_")
+
+
+def fetch_via_scrapingbee(target_url: str, *, render_js: bool = True, country: str = "us") -> str:
+    """Hit ScrapingBee's generic scrape endpoint and return the rendered HTML.
+
+    Uses premium residential proxy + JS render so the request looks like a
+    real browser to Crexi's Cloudflare layer. Burns 1 credit on the free tier
+    (1,000 credits/month included).
+    """
+    if not _has_scrapingbee_key():
+        raise RuntimeError("SCRAPINGBEE_API_KEY not set in env or st.secrets.")
+    params = {
+        "api_key": SCRAPINGBEE_API_KEY,
+        "url": target_url,
+        "render_js": "true" if render_js else "false",
+        "premium_proxy": "true",
+        "country_code": country,
+    }
+    resp = requests.get(SCRAPINGBEE_BASE_URL, params=params, timeout=120)
+    if not resp.ok:
+        raise RuntimeError(f"ScrapingBee error {resp.status_code}: {resp.text[:300]}")
+    return resp.text
+
+
+def extract_crexi_listing_urls(html: str) -> list[str]:
+    """Pull out unique Crexi property URLs from a search-results page HTML."""
+    if not html:
+        return []
+    # crexi.com/properties/<numeric_id>/<slug>
+    pattern = r"https?://www\.crexi\.com/properties/\d+/[a-zA-Z0-9_\-]+"
+    urls = sorted({m.split("?")[0] for m in re.findall(pattern, html)})
+    return urls
 
 DEFAULT_ACTOR_ID = "skootle~crexi-commercial-real-estate-scraper"
 DEFAULT_STATE_CODE = "GA"
@@ -1228,11 +1266,59 @@ def render_sidebar() -> dict[str, Any]:
         ]
         _preview_query = " ".join(p for p in _query_parts if p)
         st.caption(f"🔎 Query preview: `{_preview_query}`")
+        # Auto-discover URLs via ScrapingBee. Free tier (1k credits/month) is
+        # enough for ~20 search-page discoveries. Works alongside the manual
+        # Bulk URL paste below.
+        with st.expander("🪄 Auto-discover URLs (ScrapingBee)", expanded=False):
+            if _has_scrapingbee_key():
+                discover_url = st.text_input(
+                    "Crexi search URL",
+                    placeholder="https://www.crexi.com/properties?state=GA&types=Retail",
+                    help="Paste any Crexi search URL. ScrapingBee scrapes it through a "
+                         "residential proxy, we extract listing URLs, you click Add to bulk.",
+                    key="sb_discover_url",
+                )
+                if st.button("🪄 Discover listing URLs", use_container_width=True, key="sb_discover_btn"):
+                    if not discover_url.strip().startswith("http"):
+                        st.error("Paste a full Crexi URL starting with http(s)://")
+                    else:
+                        with st.spinner("Fetching via ScrapingBee (15–30s)…"):
+                            try:
+                                html = fetch_via_scrapingbee(discover_url.strip())
+                                found_urls = extract_crexi_listing_urls(html)
+                                st.session_state["sb_discovered_urls"] = found_urls
+                                if found_urls:
+                                    st.success(f"Found {len(found_urls)} listing URLs.")
+                                else:
+                                    st.warning("ScrapingBee returned HTML but no Crexi listing "
+                                               "URLs matched. The selector may need tuning, or "
+                                               "Crexi blocked even ScrapingBee.")
+                            except Exception as exc:
+                                st.error(f"ScrapingBee failed: {exc}")
+                _disc = st.session_state.get("sb_discovered_urls") or []
+                if _disc:
+                    st.caption(f"**Discovered ({len(_disc)}):**")
+                    st.code("\n".join(_disc[:10]) + ("\n…" if len(_disc) > 10 else ""), language="text")
+                    if st.button("➕ Add discovered URLs to Bulk URLs field", use_container_width=True, key="sb_add_disc_btn"):
+                        existing = st.session_state.get("sb_bulk_urls", "")
+                        merged = "\n".join(filter(None, [existing.strip()] + _disc))
+                        st.session_state["sb_bulk_urls"] = merged
+                        st.session_state["sb_discovered_urls"] = []
+                        st.rerun()
+            else:
+                st.info(
+                    "**SCRAPINGBEE_API_KEY not set.** Sign up for the free tier "
+                    "(1,000 credits/month, no credit card) at [scrapingbee.com]"
+                    "(https://www.scrapingbee.com), then add the key to "
+                    "**Streamlit Cloud Settings → Secrets** as:\n\n"
+                    "```toml\nSCRAPINGBEE_API_KEY = \"YOUR_KEY\"\n```"
+                )
+
         bulk_urls_in = st.text_area(
             "Bulk Crexi URLs (one per line)",
             placeholder="https://www.crexi.com/properties/2287401/...",
-            help="The working live path while Crexi's search-result actors are degraded. "
-                 "Each URL ≈ $0.04.",
+            help="The working live path. Paste manually, or use the auto-discover above. "
+                 "Each URL ≈ $0.04 via Apify.",
             key="sb_bulk_urls",
             height=100,
         )
@@ -1268,6 +1354,7 @@ def render_sidebar() -> dict[str, Any]:
 
         st.divider()
         st.caption(f"APIFY_TOKEN: {'✅ set' if _token_ok() else '⚠️ missing'}")
+        st.caption(f"SCRAPINGBEE_API_KEY: {'✅ set' if _has_scrapingbee_key() else '⚠️ not set (optional)'}")
         if _USE_APIFY_CLIENT:
             st.caption("Apify backend: ✅ `apify-client`")
         elif _APIFY_CLIENT_AVAILABLE:
