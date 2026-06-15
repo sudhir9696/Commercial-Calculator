@@ -1266,16 +1266,24 @@ def render_sidebar() -> dict[str, Any]:
         ]
         _preview_query = " ".join(p for p in _query_parts if p)
         st.caption(f"🔎 Query preview: `{_preview_query}`")
-        # Auto-discover URLs via ScrapingBee. Free tier (1k credits/month) is
-        # enough for ~20 search-page discoveries. Works alongside the manual
-        # Bulk URL paste below.
-        with st.expander("🪄 Auto-discover URLs (ScrapingBee)", expanded=False):
+        # Auto-discover via ScrapingBee. Tested 2026-06-14 against Crexi: even
+        # with stealth_proxy=true (bypasses Cloudflare), Crexi's /properties
+        # page is a server-rendered marketing skeleton — actual listings load
+        # via authenticated XHR calls a logged-out scraper never sees.
+        # Feature kept because it works on OTHER CRE sites; expander is
+        # collapsed with an honest caveat instead of being the headline.
+        with st.expander("🪄 Auto-discover URLs (ScrapingBee) — limited on Crexi", expanded=False):
+            st.caption(
+                "⚠️ **Doesn't work for Crexi search pages** (Crexi gates listings behind an "
+                "authenticated session). Still useful for LoopNet, CommercialSearch, county "
+                "assessor sites, etc. — paste any URL where the listings are public."
+            )
             if _has_scrapingbee_key():
                 discover_url = st.text_input(
-                    "Crexi search URL",
-                    placeholder="https://www.crexi.com/properties?state=GA&types=Retail",
-                    help="Paste any Crexi search URL. ScrapingBee scrapes it through a "
-                         "residential proxy, we extract listing URLs, you click Add to bulk.",
+                    "Search URL",
+                    placeholder="https://www.loopnet.com/search/commercial-real-estate/ga/",
+                    help="Paste a search URL from a CRE site. ScrapingBee fetches via "
+                         "residential proxy + JS render, we extract any Crexi-style listing URLs.",
                     key="sb_discover_url",
                 )
                 if st.button("🪄 Discover listing URLs", use_container_width=True, key="sb_discover_btn"):
