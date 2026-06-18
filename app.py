@@ -977,6 +977,115 @@ def project_investment(
     }
 
 
+def _money_compact(value: Any, decimals: int = 1) -> str:
+    """Compact dollar formatting: $15.1M, $430K, $2.4B. Avoids the truncated
+    "$15,05…" problem when the metric box can't fit the full number."""
+    if value is None:
+        return "—"
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if pd.isna(v):
+        return "—"
+    abs_v = abs(v)
+    sign = "-" if v < 0 else ""
+    if abs_v >= 1_000_000_000:
+        return f"{sign}${abs_v/1e9:.{decimals}f}B"
+    if abs_v >= 1_000_000:
+        return f"{sign}${abs_v/1e6:.{decimals}f}M"
+    if abs_v >= 1_000:
+        return f"{sign}${abs_v/1e3:,.0f}K"
+    return f"{sign}${abs_v:,.0f}"
+
+
+# SBA 504 financing — typical alternative to conventional CRE debt for
+# owner-occupied or special-purpose properties.
+SBA_504_PROJECT_MAX = 15_000_000   # ~upper bound for total project size
+SBA_STANDARD_DOWN_PCT = 10
+SBA_SPECIAL_PURPOSE_DOWN_PCT = 15  # gas stations, car washes, hotels, etc.
+
+_SBA_SPECIAL_PURPOSE_LABELS = {
+    "Retail Motor Fuels Outlet (Gas Station)",
+    "Express Car Wash",
+    "Quick-Lube / Automotive Service",
+}
+_SBA_SPECIAL_PURPOSE_CREXI_SUBS = {"Gas Station", "Car Wash", "Auto Shop"}
+
+
+def compute_sba_scenario(price: float | None, asset_class: str | None, crexi_sub: str | None) -> dict:
+    """Compute the SBA 504 alternative for this deal — downpayment + loan size.
+
+    Returns a dict with `available`, and either the financing fields or a `reason`.
+    """
+    if not price or price <= 0:
+        return {"available": False, "reason": "no price"}
+    if price > SBA_504_PROJECT_MAX:
+        return {
+            "available": False,
+            "reason": f"> ${SBA_504_PROJECT_MAX/1e6:.0f}M (over typical SBA 504 ceiling)",
+        }
+    special = (asset_class in _SBA_SPECIAL_PURPOSE_LABELS) or (crexi_sub in _SBA_SPECIAL_PURPOSE_CREXI_SUBS)
+    pct = SBA_SPECIAL_PURPOSE_DOWN_PCT if special else SBA_STANDARD_DOWN_PCT
+    return {
+        "available": True,
+        "downpayment_pct": pct,
+        "downpayment_amount": price * pct / 100.0,
+        "loan_amount": price * (100 - pct) / 100.0,
+        "special_purpose": special,
+    }
+
+
+def compute_match_score(deal: dict) -> tuple[int, str]:
+    """Return (score 0-100, qualitative label) based on how well the deal fits
+    the user's screening criteria. Weighted components:
+
+    - Verdict tier         : 40 pts (GO=40, Action=25, Review=10)
+    - Tax-alpha eligible   : 15 pts
+    - High-margin flags    : 25 pts max (5 each, capped)
+    - Data completeness    : 20 pts (4 each across 5 fields)
+    """
+    score = 0
+    verdict = deal.get("verdict") or ""
+    if verdict == VERDICT_GO:
+        score += 40
+    elif verdict == VERDICT_ACTION:
+        score += 25
+    elif verdict == VERDICT_REVIEW:
+        score += 10
+
+    if deal.get("15_Yr_Accelerated_Depreciation"):
+        score += 15
+
+    flags = list(deal.get("flags") or [])
+    high_margin_hits = sum(1 for f in flags if f in HIGH_MARGIN_TRIGGERS)
+    score += min(high_margin_hits * 5, 25)
+
+    def _present(v) -> bool:
+        if v is None or v == "" or v == "—":
+            return False
+        if isinstance(v, float) and pd.isna(v):
+            return False
+        if isinstance(v, (int, float)) and v <= 0:
+            return False
+        return True
+
+    for field in ("address", "asking_price", "cap_rate_pct", "square_footage", "listing_url"):
+        if _present(deal.get(field)):
+            score += 4
+
+    score = min(score, 100)
+    if score >= 80:
+        label = "🔥 Strong"
+    elif score >= 60:
+        label = "✓ Solid"
+    elif score >= 40:
+        label = "~ Marginal"
+    else:
+        label = "✗ Weak"
+    return score, label
+
+
 def investment_cf_dataframe(inv: dict) -> pd.DataFrame:
     years = list(range(1, len(inv["nois"]) + 1))
     df = pd.DataFrame({
@@ -1428,24 +1537,73 @@ def _investment_for_deal(deal_dict: dict, sb: dict, noi_override: float | None =
     )
 
 
-def _render_investment_block(inv: dict) -> None:
-    cols = st.columns(5)
-    cols[0].metric("Equity", f"${inv['equity']:,.0f}")
-    cols[1].metric("Loan", f"${inv['loan']:,.0f}")
-    cols[2].metric("Year-1 CoC", f"{inv['coc_y1']*100:.2f}%")
-    cols[3].metric(
+def _render_investment_block(inv: dict, deal: dict | None = None, sb: dict | None = None) -> None:
+    deal = deal or {}
+    sb = sb or {}
+
+    price = inv.get("price") or 0
+    noi_y1 = inv.get("noi_y1") or 0
+    ebitda = noi_y1  # CRE convention: property-level EBITDA ≈ NOI
+    sba = compute_sba_scenario(price, sb.get("asset_class"), sb.get("crexi_sub_type"))
+    score, score_label = compute_match_score(deal) if deal else (0, "—")
+
+    # Row 1 — capital structure + headline returns
+    r1 = st.columns(5)
+    r1[0].metric("Equity", _money_compact(inv["equity"]))
+    r1[1].metric("Loan", _money_compact(inv["loan"]))
+    r1[2].metric("Year-1 CoC", f"{inv['coc_y1']*100:.2f}%")
+    r1[3].metric(
         "Levered IRR",
         f"{inv['levered_irr']*100:.2f}%" if inv["levered_irr"] is not None else "—",
     )
-    cols[4].metric("Equity Multiple", f"{inv['equity_multiple']:.2f}x")
+    r1[4].metric("Equity Multiple", f"{inv['equity_multiple']:.2f}x")
 
-    cols2 = st.columns(3)
-    cols2[0].metric("Annual Debt Service", f"${inv['annual_ds']:,.0f}")
-    cols2[1].metric("Reversion @ exit", f"${inv['reversion']:,.0f}")
-    cols2[2].metric(
-        "NPV @ discount rate", f"${inv['levered_npv']:,.0f}",
-        delta="positive = clears hurdle" if inv["levered_npv"] >= 0 else "below hurdle",
+    # Row 2 — income / cash flow / NPV
+    r2 = st.columns(5)
+    r2[0].metric("Year-1 NOI", _money_compact(noi_y1))
+    r2[1].metric(
+        "EBITDA", _money_compact(ebitda),
+        help="For real estate, property-level EBITDA ≈ NOI. For deals that include "
+             "an operating business (gas station C-store, car wash service revenue, "
+             "self-storage admin fees), real EBITDA is higher — add those items on "
+             "top of NOI for an apples-to-apples view.",
     )
+    r2[2].metric("Annual Debt Service", _money_compact(inv["annual_ds"]))
+    r2[3].metric("Reversion @ exit", _money_compact(inv["reversion"]))
+    r2[4].metric(
+        "NPV @ discount rate", _money_compact(inv["levered_npv"]),
+        delta="↑ clears hurdle" if inv["levered_npv"] >= 0 else "↓ below hurdle",
+        delta_color="normal" if inv["levered_npv"] >= 0 else "inverse",
+    )
+
+    # Row 3 — alternative financing + match score
+    r3 = st.columns(3)
+    if sba["available"]:
+        special_tag = " · special-purpose" if sba.get("special_purpose") else ""
+        r3[0].metric(
+            f"SBA 504 Down ({sba['downpayment_pct']}%)",
+            _money_compact(sba["downpayment_amount"]),
+            delta=f"vs {_money_compact(inv['equity'])} conventional{special_tag}",
+            delta_color="off",
+            help="SBA 504 typically requires 10% down (15% for special-purpose assets "
+                 "like gas stations and car washes), vs 25–35% for conventional CRE. "
+                 "Project ceiling ~$15M total — flagged unavailable above that.",
+        )
+    else:
+        r3[0].metric(
+            "SBA 504 Down", "N/A",
+            delta=sba.get("reason", ""), delta_color="off",
+        )
+
+    r3[1].metric(
+        "Match Score", f"{score} / 100",
+        delta=score_label, delta_color="off",
+        help="Composite of: verdict tier (40 pts), tax-alpha eligible (15), "
+             "high-margin ancillary flags (25), data completeness (20). ≥ 80 = strong.",
+    )
+
+    # Spacer so the row isn't lopsided when only 2 cells used.
+    r3[2].metric("Price / SF", _money_compact(price / deal["square_footage"]) if deal.get("square_footage") and pd.notna(deal.get("square_footage")) and deal["square_footage"] > 0 else "—")
 
     cf_df = investment_cf_dataframe(inv)
     st.dataframe(
@@ -1528,7 +1686,7 @@ def render_command_center(deal: pd.Series, idx: int, sb: dict) -> None:
         if inv is None:
             st.info("Need both asking price and cap rate to run the projection.")
         else:
-            _render_investment_block(inv)
+            _render_investment_block(inv, deal=deal.to_dict(), sb=sb)
 
         st.markdown("**Underwriting**")
         xlsx_bytes = build_ccim_workbook(deal.to_dict(), investment=inv)
@@ -1981,7 +2139,7 @@ def render_screener_tab(sb: dict) -> None:
 
             inv = _investment_for_deal(sel.to_dict(), sb)
             if inv:
-                _render_investment_block(inv)
+                _render_investment_block(inv, deal=sel.to_dict(), sb=sb)
                 xlsx_bytes = build_ccim_workbook(sel.to_dict(), investment=inv)
                 st.download_button(
                     "🧮 Generate CCIM Excel Model",
@@ -2190,10 +2348,10 @@ def render_analyzer_tab(sb: dict) -> None:
     st.divider()
     st.subheader(f"🔬 {address or 'Untitled deal'}")
     head_cols = st.columns(4)
-    head_cols[0].metric("Asking Price", f"${price:,.0f}")
+    head_cols[0].metric("Asking Price", _money_compact(price))
     head_cols[1].metric("Cap Rate", f"{cap:.2f}%")
     head_cols[2].metric("Square Footage", f"{int(sf):,}" if sf else "—")
-    head_cols[3].metric("Price / SF", f"${price/sf:,.0f}" if sf else "—")
+    head_cols[3].metric("Price / SF", _money_compact(price/sf) if sf else "—")
 
     if url_in:
         prop_id = extract_crexi_property_id(url_in)
@@ -2203,9 +2361,8 @@ def render_analyzer_tab(sb: dict) -> None:
         st.link_button("📄 Download OM for Claude Audit", om_url_in,
                        type="primary", use_container_width=False)
 
-    st.markdown("#### Investment analysis")
-    _render_investment_block(inv)
-
+    # Build the deal context BEFORE the investment block so match-score and
+    # Price/SF can read from it.
     deal_dict = {
         "address": address or slug_hint or "Untitled deal",
         "asking_price": price,
@@ -2214,6 +2371,9 @@ def render_analyzer_tab(sb: dict) -> None:
         "listing_url": url_in,
         "om_url": om_url_in,
     }
+
+    st.markdown("#### Investment analysis")
+    _render_investment_block(inv, deal=deal_dict, sb=sb)
     xlsx_bytes = build_ccim_workbook(deal_dict, investment=inv)
     st.download_button(
         "🧮 Generate CCIM Excel Model (with Investment Analysis sheet)",
