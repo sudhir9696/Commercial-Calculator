@@ -2393,26 +2393,48 @@ def render_analyzer_tab(sb: dict) -> None:
 
 CRE_ANALYST_SYSTEM_PROMPT = """You are a senior commercial real estate (CRE) \
 investment analyst with 20 years of experience underwriting acquisitions for \
-institutional investors. You think like an institutional buyer:
+institutional investors. You also serve as a tax + structuring advisor.
 
+You think like an institutional buyer:
 - Lease structure first, asset second. Tenant credit quality matters more than day-1 yield.
 - Replacement cost is the floor; cap rate is the ceiling. Always ask: would we build this for less?
 - For NNN: who owns the roof, structure, and parking lot? Read the lease before the broker's marketing.
-- For multifamily: in-place rent vs market rent. What's the rent growth runway? What are real OpEx ratios for this asset class in this market?
+- For multifamily: in-place rent vs market rent, real OpEx ratios for this asset class in this market.
 - Tax-advantaged sub-classes (gas stations, car washes — IRS Class 57.1, 15-yr accelerated depreciation) need Phase 1 environmental on USTs / chemical runoff.
-- High-margin ancillary revenue (COAM gaming, lottery, unbranded fuel margin, vending) can carry a deal — but verify it's transferable and re-licensable.
+- High-margin ancillary revenue (COAM gaming, lottery, unbranded fuel margin, vending) can carry a deal — verify transferable and re-licensable.
+
+You are fluent in these data sources and recommend them by NAME with specific series / sections when relevant:
+- **FRED (Federal Reserve Economic Data)** — cite specific series IDs: DGS10 (10-yr Treasury), MORTGAGE30US (30-yr mortgage rate), CPIAUCSL (CPI), MSPUS (median sale price), FEDFUNDS (Fed funds), CFNAI (Chicago Fed activity), regional MSA unemployment series.
+- **Mueller Market Cycle Reports (Glenn Mueller, CCIM-affiliated)** — name the 4 quadrants (Recovery, Expansion, Hypersupply, Recession) and which one the asset class is in for the property's MSA.
+- **CCIM Intellisite / Site To Do Business** — pull demographic radius (1/3/5 mi), daytime population, traffic counts, trade-area income, comp sales within 24 months.
+- **CoStar** — institutional comps + rent comparables.
+- **County tax assessor records** — ownership history, prior sale, assessed value (free, public).
+
+Tax + structuring playbook items you actively recommend:
+- IRS Class 57.1 (15-yr depreciation) for gas stations + car washes vs 39-yr default for other CRE.
+- Cost segregation studies (~$10-20K, accelerates depreciation on tangible interior improvements, often 20-30% of basis reclassed to 5/7/15-yr).
+- Bonus depreciation (60% in 2026 per current tax law, phasing down).
+- Section 179 expensing where applicable.
+- Opportunity Zones for capital gains deferral.
+- LLC structures:
+  - **Single-member LLC** — default for solo investor.
+  - **Holdco-opco split** — RE in one LLC, operating business in another. Critical for gas stations, car washes, hotels.
+  - **Series LLC** — portfolio buyers in DE, NV, TX, IL, OK, TN, UT.
+  - **DST (Delaware Statutory Trust)** — 1031 exchange replacement property for hands-off buyers.
 
 When responding:
-1. Lead with the verdict and the single most important reason — no preamble.
+1. Lead with the verdict / THE WHY in 2-3 sentences. No preamble.
 2. Be specific. Cite numbers from the data provided. Don't speculate.
-3. If critical data is missing, say what's missing and how to get it. List it as the first question to ask the broker.
-4. Cite specific OM passages when relevant (e.g. "per OM: 'lease expires 9/30/2040'").
-5. Use markdown: headers, bullet points, **bold** for key terms and numbers.
+3. If critical data is missing, say so — that's the first broker question.
+4. Cite specific OM passages when relevant ("per OM: 'lease expires 9/30/2040'").
+5. Use markdown: headers, bullets, **bold** for key terms and numbers.
+6. For long-form actions (playbook, pitchdeck), use the EXACT section headers requested.
 
 Never:
-- Hedge with "it depends" without stating the dependency explicitly.
+- Hedge with "it depends" without naming the dependency explicitly.
 - Use generic CRE platitudes ("location is important").
-- Make up data not in the OM or context."""
+- Make up data not in the OM or context.
+- Give legal/tax advice without the standard "consult your CPA/attorney" caveat where appropriate."""
 
 CRE_ACTION_PROMPTS: dict[str, str] = {
     "summarize": (
@@ -2445,6 +2467,98 @@ CRE_ACTION_PROMPTS: dict[str, str] = {
         "## Top 5 Broker Questions (ranked)\n"
         "## Bottom Line (2–3 sentences)"
     ),
+    "playbook": (
+        "Produce a comprehensive institutional **Deal Playbook** for this asset, tailored "
+        "to the client's stated goal (if provided in the Deal Context above). Use these "
+        "EXACT section headers in order, in markdown:\n\n"
+        "## THE WHY (the thesis)\n"
+        "2–3 sentences. Why THIS deal, for THIS client, at THIS price, RIGHT NOW.\n\n"
+        "## Deal Snapshot\n"
+        "Address, asset class, sub-class, headline financials, one-line tenant/lease story, "
+        "explicit match (or mismatch) against the client goal.\n\n"
+        "## Returns Profile\n"
+        "- **Cap Rate** (in-place, going-in)\n"
+        "- **Cash-on-Cash Return** Year 1 and Year 5 (state growth assumption)\n"
+        "- **Cash Flow** — Year 1 NOI, Year 1 after-debt CF\n"
+        "- **Levered IRR** over the hold period\n"
+        "- **Capital Accumulation** — total equity build (cash flow + amortization + appreciation) vs initial equity\n"
+        "- **ROI / Total return on equity**\n\n"
+        "## Cost Segregation\n"
+        "- Est. % of basis reclassable to 5/7/15-yr (typical ranges by asset class)\n"
+        "- Year-1 bonus depreciation impact (current 60% bonus rate)\n"
+        "- 15-yr Class 57.1 eligibility (Gas Stations, Car Washes) vs 39-yr default\n"
+        "- Study cost vs estimated tax savings (rough payback)\n\n"
+        "## Tax & Structure Recommendations\n"
+        "- Recommended tax election (bonus depreciation, Section 179, OZ if site qualifies)\n"
+        "- **Recommended LLC structure** — pick from {single-member LLC, Holdco-Opco split, Series LLC, DST} with explicit reasoning. For gas station / car wash / hotel deals, default to Holdco-Opco and explain WHY (liability ring-fencing + separate basis tracking).\n\n"
+        "## Reports I'd Want to See\n"
+        "For each, name the specific series / section / variables. No generic categories — be precise.\n"
+        "### FRED — specific series IDs and why each matters for THIS deal\n"
+        "### Mueller / Market Cycle — which quadrant for this asset class in this MSA, and the entry-timing implication\n"
+        "### CCIM Intellisite — exact demographic radii + variables to pull (daytime pop, traffic counts, trade-area income, etc.)\n"
+        "### County records / public — what to verify (last sale price, assessed value, ownership chain, code violations)\n\n"
+        "## Document Audit Requirements\n"
+        "Numbered list of documents the broker MUST produce before LOI submission. Be specific.\n\n"
+        "## Offer Recommendation\n"
+        "- Suggested initial offer (specific $ + % below ask)\n"
+        "- Reasoning (cap, market, lease quality, comps)\n"
+        "- Negotiation room (range)\n"
+        "- Terms to push for (DD period, financing contingency, etc.)\n\n"
+        "## Due Diligence Roadmap\n"
+        "Week-by-week 30-day plan. List specific deliverables per week.\n\n"
+        "## Entry Strategy\n"
+        "- Day-1 actions post-close\n"
+        "- Year-1 capex / repositioning\n"
+        "- Operational changes (especially for gas stations / car washes / self-storage)\n\n"
+        "## Exit Strategy\n"
+        "- Hold period recommendation with reasoning\n"
+        "- Exit cap assumption (entry + X bps)\n"
+        "- Realistic exit price range\n"
+        "- Exit channel: 1031 / refi-and-hold / portfolio sale / REIT roll-up\n\n"
+        "## Financial Model Required?\n"
+        "YES / NO / NICE-TO-HAVE. What's already computed in this dashboard vs what's missing "
+        "(10-yr DCF with debt schedule + tax shield + recapture? sensitivity tables?).\n\n"
+        "## Bottom Line\n"
+        "🟢 GO / 🟡 Hold / 🔴 Pass, with 1-paragraph closing argument."
+    ),
+    "pitchdeck": (
+        "Produce a **Pitch Deck / Investor One-Pager** for this deal — the document a "
+        "syndicator sends to co-investors or LPs to raise equity. This is OUTBOUND marketing, "
+        "not inbound analysis. Confident but not salesy. Cite specific numbers. No bullshit.\n\n"
+        "Use these EXACT section headers in markdown:\n\n"
+        "## The Opportunity\n"
+        "One-paragraph hook. Why now, why this asset, why this team.\n\n"
+        "## Property Overview\n"
+        "Address, asset class + sub-class, year built, SF or units, key physical attributes, "
+        "lot size, parking, frontage if relevant.\n\n"
+        "## Tenant & Income Story\n"
+        "Who pays the rent, how much, for how long, how secure. For multifamily: rent roll story, "
+        "in-place vs market.\n\n"
+        "## The Numbers\n"
+        "| Metric | Value |\n"
+        "| --- | --- |\n"
+        "| Purchase Price | $X |\n"
+        "| Year-1 NOI | $X |\n"
+        "| Going-In Cap | X.XX% |\n"
+        "| Year-1 Cash-on-Cash | X.XX% |\n"
+        "| Levered IRR (target) | X.XX% |\n"
+        "| Equity Multiple (target) | X.XXx |\n"
+        "| Hold Period | X years |\n\n"
+        "## Capital Stack\n"
+        "Total equity required, loan size + terms (LTV / rate / amort), SBA 504 alternative "
+        "(if size + asset class qualifies), reserves.\n\n"
+        "## Tax Strategy Highlights\n"
+        "Cost seg potential, 15-yr Class 57.1 depreciation (if Gas Station / Car Wash), bonus "
+        "depreciation impact in Year 1, structuring recommendation.\n\n"
+        "## Top 3 Risks & Mitigations\n"
+        "Each risk in bold, followed by the mitigation in 1 sentence.\n\n"
+        "## Why This Sponsor\n"
+        "Placeholder — sponsor fills in track record (number of deals, AUM, asset-class focus). "
+        "Leave 2-3 lines.\n\n"
+        "## The Ask\n"
+        "Total equity raise, minimum LP check, target close date, distribution schedule "
+        "(preferred return + waterfall placeholder)."
+    ),
 }
 
 
@@ -2457,7 +2571,7 @@ def _deal_context_block(ctx: dict[str, Any]) -> str:
             return fmt(v)
         except Exception:
             return str(v)
-    return (
+    base = (
         "# Deal Context\n"
         f"- Address: {_f('address')}\n"
         f"- Asking Price: ${_f('asking_price', lambda x: f'{float(x):,.0f}')}\n"
@@ -2470,6 +2584,18 @@ def _deal_context_block(ctx: dict[str, Any]) -> str:
         f"- IRS 15-yr eligible: {_f('15_Yr_Accelerated_Depreciation')}\n"
         f"- Ancillary flags: {_f('flags', lambda x: ', '.join(x) if x else '—')}\n"
     )
+    extras = []
+    cg = (ctx.get("client_goal") or "").strip()
+    if cg:
+        extras.append(f"\n# Client Goal\n{cg}\n")
+    refs = ctx.get("reference_urls")
+    if refs:
+        urls_list = "\n".join(f"- {u}" for u in refs)
+        extras.append(f"\n# Reference URLs (provided by user — content not auto-fetched)\n{urls_list}\n")
+    return base + "".join(extras)
+
+
+_LONG_FORM_ACTIONS = {"full", "playbook", "pitchdeck"}
 
 
 def stream_claude_analysis(action: str, deal_ctx: dict[str, Any], om_text: str):
@@ -2508,9 +2634,12 @@ def stream_claude_analysis(action: str, deal_ctx: dict[str, Any], om_text: str):
         "text": f"\n\n# Task\n\n{action_prompt}",
     })
 
+    # Long-form actions (Full memo, Playbook, Pitch Deck) need more room.
+    max_tokens = 8192 if action in _LONG_FORM_ACTIONS else 4096
+
     with client.messages.stream(
         model=ANTHROPIC_MODEL,
-        max_tokens=4096,
+        max_tokens=max_tokens,
         system=[
             {
                 "type": "text",
@@ -2592,24 +2721,34 @@ def render_ai_analyst_tab(sb: dict) -> None:
         if PdfReader is None:
             st.warning("`pypdf` not installed — PDF upload unavailable.")
         else:
-            pdf_file = st.file_uploader(
-                "Upload an Offering Memorandum (PDF)",
-                type=["pdf"], key="analyst_pdf",
+            pdf_files = st.file_uploader(
+                "Upload deal documents (OM, Flyer, Brochure, broker reports)",
+                type=["pdf"], key="analyst_pdfs",
+                accept_multiple_files=True,
+                help="Drop multiple PDFs. Each is labeled by filename in Claude's context "
+                     "so it knows which document each excerpt came from.",
             )
-            if pdf_file is not None:
-                om_text = extract_pdf_text(pdf_file.getvalue())
-                if om_text:
-                    st.success(f"Extracted {len(om_text):,} characters from PDF.")
-                    with st.expander("PDF text preview (first 2000 chars)"):
-                        st.text(om_text[:2000])
+            if pdf_files:
+                parts: list[str] = []
+                total_chars = 0
+                for f in pdf_files:
+                    text = extract_pdf_text(f.getvalue())
+                    if text:
+                        parts.append(f"### Document: {f.name}\n\n{text}")
+                        total_chars += len(text)
+                if parts:
+                    om_text = "\n\n---\n\n".join(parts)
+                    st.success(f"Extracted {total_chars:,} chars from {len(parts)} document(s).")
                     parsed = parse_om_fields(om_text)
                     if parsed:
-                        st.caption(f"Auto-parsed: {', '.join(f'{k}={v}' for k, v in parsed.items())}")
+                        st.caption(f"Auto-parsed from documents: {', '.join(f'{k}={v}' for k, v in parsed.items())}")
                         deal_ctx.setdefault("asking_price", parsed.get("price"))
                         deal_ctx.setdefault("cap_rate_pct", parsed.get("cap_rate"))
                         deal_ctx.setdefault("square_footage", parsed.get("sf"))
+                    with st.expander("Combined text preview (first 2000 chars)"):
+                        st.text(om_text[:2000])
                 else:
-                    st.warning("Couldn't extract text — the PDF may be image-only (scanned).")
+                    st.warning("No text extracted — PDFs may be image-only (scanned).")
 
     with src_tabs[2]:
         manual_addr = st.text_input("Property address / nickname", key="analyst_addr_manual")
@@ -2631,13 +2770,48 @@ def render_ai_analyst_tab(sb: dict) -> None:
                 "property_type": "",
             }
 
+    # ---------- Client Goal + Reference URLs ----------
+    st.divider()
+    st.markdown("**Strategy context (optional but shapes the recommendations)**")
+    cg_col, ref_col = st.columns([3, 2])
+    with cg_col:
+        client_goal = st.text_area(
+            "Client goal — what are you actually trying to do with this deal?",
+            placeholder=(
+                "e.g., Cash-flowing tax-alpha asset for 1031 exchange, $3-5M range, "
+                "NNN with 10+ yrs remaining, in a growth MSA. Need 60%+ leverage."
+            ),
+            height=88,
+            key="ai_client_goal",
+        )
+    with ref_col:
+        ref_urls_in = st.text_area(
+            "Reference URLs (one per line, optional)",
+            placeholder=(
+                "https://www.crexi.com/properties/...\n"
+                "https://broker-site.com/flyer.pdf\n"
+                "https://fred.stlouisfed.org/series/DGS10"
+            ),
+            help="Recorded as context for Claude — not auto-fetched. Helps the AI "
+                 "know what sources you'd want it to reason from.",
+            height=88,
+            key="ai_ref_urls",
+        )
+    ref_urls = [u.strip() for u in (ref_urls_in or "").splitlines() if u.strip().startswith("http")]
+    if client_goal.strip():
+        deal_ctx = dict(deal_ctx)
+        deal_ctx["client_goal"] = client_goal.strip()
+    if ref_urls:
+        deal_ctx = dict(deal_ctx)
+        deal_ctx["reference_urls"] = ref_urls
+
     # ---------- Action buttons ----------
     if not deal_ctx and not om_text:
         st.info("👆 Pick a source above to enable analysis.")
         return
 
     st.divider()
-    st.markdown("**Choose an analysis. Output streams below in real time.**")
+    st.markdown("**Quick analyses (short — single-section output):**")
     bc = st.columns(5)
     triggered_action: str | None = None
     if bc[0].button("📝 Summarize", use_container_width=True, key="ai_sum"):
@@ -2648,8 +2822,26 @@ def render_ai_analyst_tab(sb: dict) -> None:
         triggered_action = "questions"
     if bc[3].button("✅ Go / No-Go", use_container_width=True, key="ai_v"):
         triggered_action = "verdict"
-    if bc[4].button("📊 Full Memo", use_container_width=True, type="primary", key="ai_full"):
+    if bc[4].button("📊 Full Memo", use_container_width=True, key="ai_full"):
         triggered_action = "full"
+
+    st.markdown("**Long-form deliverables (multi-section, ~30–60s, ~$0.05–0.15):**")
+    bc2 = st.columns(2)
+    if bc2[0].button(
+        "📑 Full Playbook (institutional)",
+        use_container_width=True, type="primary", key="ai_playbook",
+        help="THE WHY → Returns / Cost seg / Tax & LLC structure → Recommended reports "
+             "(FRED, Mueller, Intellisite) → Offer rec → DD roadmap → Entry / Exit → "
+             "Financial model gap analysis → Bottom line.",
+    ):
+        triggered_action = "playbook"
+    if bc2[1].button(
+        "📊 Pitch Deck (for LPs / co-investors)",
+        use_container_width=True, type="primary", key="ai_pitchdeck",
+        help="Outbound marketing one-pager: opportunity, property, income story, "
+             "numbers table, capital stack, tax strategy, risks/mitigations, the ask.",
+    ):
+        triggered_action = "pitchdeck"
 
     if triggered_action:
         st.divider()
