@@ -2661,7 +2661,7 @@ def render_ai_analyst_tab(sb: dict) -> None:
     st.subheader("🤖 AI Analyst — Claude underwrites the deal")
     st.caption(
         f"Powered by **{ANTHROPIC_MODEL}** with prompt caching. "
-        f"~$0.05–0.15 for the first action on a new OM; ~$0.01–0.03 for each "
+        f"~\\$0.05–0.15 for the first action on a new OM; ~\\$0.01–0.03 for each "
         f"follow-up action on the same OM (cache hit)."
     )
 
